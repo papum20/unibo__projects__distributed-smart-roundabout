@@ -1,0 +1,50 @@
+
+services:
+
+  broker:
+    image: eclipse-mosquitto
+    container_name: mroundabout_mqttbroker
+    ports:
+      - "${PORT_LOCAL_BROKER}:${PORT_BROKER}"                       # Expose port so you can watch traffic from your host machine
+      - "${PORT_LOCAL_BROKER_WEBSOCKET}:${PORT_BROKER_WEBSOCKET}"   # Optional: for WebSockets if you use a web visualizer
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+
+  controller:
+    build: ./service-controller
+    container_name: roundabout-controller
+    env_file:
+      - .env
+    ports:
+      - "${PORT_LOCAL_CONTROLLER}:${PORT_CONTROLLER}"
+    networks:
+      - vehicle-network
+      - controller-network
+
+  vehicle:
+    build: ./service-vehicle
+    image: roundabout-vehicle:latest
+    env_file:
+    - .env
+    deploy:
+      replicas: 10
+    networks:
+      - roundabout-network
+      - vehicle-network
+
+  webviewer:
+    build: ./service-viewer
+    container_name: roundabout-viewer
+    env_file:
+      - .env
+    ports:
+      - "${PORT_LOCAL_WEBVIEWER}:${PORT_WEBVIEWER}"
+    networks:
+      - vehicle-network
+
+
+networks:
+  vehicle-network:
+    driver: bridge
+  controller-network:
+    driver: bridge
