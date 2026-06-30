@@ -11,7 +11,9 @@ services:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
 
   controller:
-    build: ./service-controller
+    build:
+      context: .
+      dockerfile: service-controller/Dockerfile
     container_name: roundabout-controller
     env_file:
       - .env
@@ -22,18 +24,21 @@ services:
       - controller-network
 
   vehicle:
-    build: ./service-vehicle
+    build:
+      context: .
+      dockerfile: service-vehicle/Dockerfile
     image: roundabout-vehicle:latest
     env_file:
     - .env
     deploy:
       replicas: 10
     networks:
-      - roundabout-network
       - vehicle-network
 
   webviewer:
-    build: ./service-viewer
+    build:
+      context: .
+      dockerfile: service-webviewer/Dockerfile
     container_name: roundabout-viewer
     env_file:
       - .env

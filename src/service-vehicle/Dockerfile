@@ -2,12 +2,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY service-vehicle/ .
+COPY common/ common/
 
-# Copy source code
-COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Run the script
 CMD ["python", "main.py"]
