@@ -25,13 +25,18 @@ def get_env_or_exit(key: str) -> str:
 class Config:
 
 	# Read Configuration from Docker Environment
+
+	PORT_BROKER			= int(get_env_or_exit("PORT_BROKER"))
+
+	HOST_BROKER			= get_env_or_exit("HOST_BROKER")
+	
 	URL_BROKER				= get_env_or_exit("URL_BROKER")
 	URL_BROKER_WEBSOCKET	= get_env_or_exit("URL_BROKER_WEBSOCKET")
 	URL_CONTROLLER			= get_env_or_exit("URL_CONTROLLER")
 
-	TOPIC_VEHICLE			= get_env_or_exit("TOPIC_VEHICLE")
-
-	logger = logging.getLogger(__name__)
+	TOPIC_VEHICLE_PREFIX			= get_env_or_exit("TOPIC_VEHICLE_PREFIX")
+	TOPIC_VEHICLE_COMMAND_SUFFIX	= get_env_or_exit("TOPIC_VEHICLE_COMMAND_SUFFIX")
+	TOPIC_VEHICLE_TELEMETRY_SUFFIX	= get_env_or_exit("TOPIC_VEHICLE_TELEMETRY_SUFFIX")
 
 
 config = Config()

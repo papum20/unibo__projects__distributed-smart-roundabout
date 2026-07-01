@@ -2,5 +2,5 @@ from pydantic import BaseModel
 
 
 class Vehicle(BaseModel):
-	id:		int
+	id:		str
 	speed:	float	# m/s
