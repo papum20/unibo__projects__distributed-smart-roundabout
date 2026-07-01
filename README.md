@@ -17,3 +17,8 @@ Stop all services:
 ```bash
 ./src/down.sh
 ```
+
+Run tests:
+```bash
+pytest
+```
