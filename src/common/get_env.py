@@ -27,6 +27,7 @@ class Config:
 	# Read Configuration from Docker Environment
 
 	PORT_BROKER			= int(get_env_or_exit("PORT_BROKER"))
+	PORT_WEBVIEWER		= int(get_env_or_exit("PORT_WEBVIEWER"))
 
 	HOST_BROKER			= get_env_or_exit("HOST_BROKER")
 	

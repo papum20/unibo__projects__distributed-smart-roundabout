@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Smart Roundabout Viewer</title>
+    <style>
+        body { background-color: #222; color: white; font-family: Arial; text-align: center; }
+        canvas { background-color: #333; border: 2px solid #555; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Smart Roundabout Orchestrator</h1>
+    <canvas id="simCanvas" width="800" height="800"></canvas>
+
+    <script>
+        const canvas = document.getElementById("simCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // center of canvas
+        const offsetX = 400;
+        const offsetY = 400;
+        const roundaboutRadius = 100; // visual radius
+
+        async function fetchStateAndDraw() {
+            try {
+                const response = await fetch('/api/state');
+                const vehicles = await response.json();
+
+                // clear the screen
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // draw the rRoundabout center
+                ctx.beginPath();
+                ctx.arc(offsetX, offsetY, roundaboutRadius, 0, 2 * Math.PI);
+                ctx.strokeStyle = "white";
+                ctx.lineWidth = 4;
+                ctx.stroke();
+
+                // draw each car
+                for (let vehicle_id in vehicles) {
+                    let vehicle = vehicles[id];
+                    
+                    // Note: car.x and car.y are the logical coordinates from your python math.
+                    // We add offsetX and offsetY to place them correctly on the 800x800 screen.
+                    let drawX = vehicle.x + offsetX;
+                    let drawY = vehicle.y + offsetY;
+
+                    // draw car dot
+                    ctx.beginPath();
+                    ctx.arc(drawX, drawY, 8, 0, 2 * Math.PI);
+                    ctx.fillStyle = "cyan"; // Could be red if in fail-safe!
+                    ctx.fill();
+
+                    // draw car ID text
+                    ctx.fillStyle = "white";
+                    ctx.font = "12px Arial";
+                    ctx.fillText(vehicle_id, drawX + 12, drawY + 4);
+                }
+            } catch (err) {
+                console.error("Error fetching state:", err);
+            }
+
+            // ask the browser to run this loop again for the next frame (~60 FPS)
+            requestAnimationFrame(fetchStateAndDraw);
+        }
+
+        fetchStateAndDraw();
+    </script>
+</body>
+</html>

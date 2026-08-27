@@ -6,7 +6,12 @@ Project for the Distributed Systems course at University of Bologna 2025/2026. A
 - docker
 
 
-## Commands
+## Usage
+
+Viewer: http://localhost:8080  
+
+
+### Commands
 
 Start all services:
 ```bash
@@ -22,3 +27,6 @@ Run tests:
 ```bash
 pytest
 ```
+
+
+
