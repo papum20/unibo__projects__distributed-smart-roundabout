@@ -1,5 +1,5 @@
 #
-# The x,y coordinate system goes starts from the bottom left corner.
+# The x,y coordinate system starts from the bottom left corner.
 #
 
 import math
@@ -13,7 +13,7 @@ from common.models.models import Position
 
 
 def get_dist(pos1: Position, pos2: Position) -> float:
-    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
+	return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
 
@@ -36,27 +36,13 @@ def move(pos_start: Position, speed: float, dt: float) -> Position:
 		# already at the center, cannot move towards it
 		return pos_start
 	
-	if pos_start.x == ROUNDABOUT_POS.x:
-		# moving vertically
-		move_x = 0.0
-		move_y = - move_dist if pos_start.y > ROUNDABOUT_POS.y else move_dist
+	# vector(center-car)
+	dir_x = ROUNDABOUT_POS.x - pos_start.x
+	dir_y = ROUNDABOUT_POS.y - pos_start.y
 
-	elif pos_start.y == ROUNDABOUT_POS.y:
-		# moving horizontally
-		move_y = 0.0
-		move_x = - move_dist if pos_start.x > ROUNDABOUT_POS.x else move_dist
-
-	else:
-		delta_x	= pos_start.x - ROUNDABOUT_POS.x
-		delta_y	= pos_start.y - ROUNDABOUT_POS.y
-
-		# Triangle formed by the vector going from the vehicle to the center of the roundabout.
-		# Considering the angle at the center.
-		center_angle_cos	= dist_to_center / math.fabs(delta_x)
-		center_angle_sin	= dist_to_center / math.fabs(delta_y)
-
-		move_x	= - move_dist * center_angle_cos if pos_start.x > ROUNDABOUT_POS.x else move_dist * center_angle_cos
-		move_y	= - move_dist * center_angle_sin if pos_start.y > ROUNDABOUT_POS.y else move_dist * center_angle_sin
+	# 2. Normalize the vector (make its length 1) and multiply by move_dist
+	move_x = (dir_x / dist_to_center) * move_dist
+	move_y = (dir_y / dist_to_center) * move_dist
 		
 	return Position(x=pos_start.x + move_x, y=pos_start.y + move_y)
 
@@ -84,4 +70,4 @@ def get_dist_to_roundabout(pos: Position) -> float:
 
 
 def is_in_roundabout(pos: Position) -> bool:
-    return get_dist_to_roundabout(pos) <= 0.0
+	return get_dist_to_roundabout(pos) <= 0.0

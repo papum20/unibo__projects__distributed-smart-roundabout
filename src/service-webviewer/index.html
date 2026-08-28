@@ -20,10 +20,18 @@
 		const offsetY = 400;
 		const roundaboutRadius = 100; // visual radius
 
-		const CAR_SCALE = 2.0;
+		let sysConfig = null;
+
+		async function fetchConfig() {
+			const response	= await fetch('/api/config');
+			sysConfig		= await response.json();
+		}
 
 
 		async function fetchStateAndDraw() {
+			// get config once on load
+			if (!sysConfig) await fetchConfig();
+
 			try {
 				const response = await fetch('/api/state');
 				const vehicles = await response.json();
@@ -33,31 +41,77 @@
 
 				// draw the rRoundabout center
 				ctx.beginPath();
-				ctx.arc(offsetX, offsetY, roundaboutRadius, 0, 2 * Math.PI);
+				ctx.arc(offsetX, offsetY, sysConfig.radius * sysConfig.scale, 0, 2 * Math.PI);
 				ctx.strokeStyle = "white";
-				ctx.lineWidth = 4;
+				ctx.lineWidth	= 4;
 				ctx.stroke();
 
 				// draw each car
 				for (let vehicle_id in vehicles) {
 					let vehicle = vehicles[vehicle_id];
 					
-					// Note: car.x and car.y are the logical coordinates from python math.
+					// car.x and car.y are the logical coordinates.
 					// We add offsetX and offsetY to place them correctly on the 800x800 screen.
-					let drawX = (vehicle.pos.x * CAR_SCALE) + offsetX;
-					let drawY = (vehicle.pos.y * CAR_SCALE) + offsetY;
+					let drawX = (vehicle.pos.x * sysConfig.scale) + offsetX;
+					let drawY = (vehicle.pos.y * sysConfig.scale) + offsetY;
 
 					// draw car dot
 					ctx.beginPath();
 					ctx.arc(drawX, drawY, 8, 0, 2 * Math.PI);
-					ctx.fillStyle = "cyan"; // Could be red if in fail-safe
+					ctx.fillStyle = vehicle.state === "FAILSAFE" ? "red" : "cyan";
 					ctx.fill();
 
 					// draw car ID text
-					ctx.fillStyle = "white";
-					ctx.font = "12px Arial";
-					ctx.fillText(vehicle_id, drawX + 12, drawY + 4);
+					ctx.fillStyle	= "white";
+					ctx.font		= "12px Arial";
+					ctx.fillText(vehicle_id.substring(0,4), drawX + 12, drawY + 4);
 				}
+
+				/*
+				 * info (legend, telemetry)
+				 */
+
+				const nVehicles = Object.keys(vehicles).length;
+				const boxHeight = 35 + (nVehicles * 20);
+
+				ctx.fillStyle = "rgba(0, 0, 0, 0.7)";
+				ctx.fillRect(10, 10, 320, boxHeight);
+
+				// dashboard title
+				ctx.fillStyle = "white";
+				ctx.font = "bold 14px monospace";
+				ctx.fillText("LIVE TELEMETRY", 20, 30);
+
+				// separating line
+				ctx.beginPath();
+				ctx.moveTo(15, 38);
+				ctx.lineTo(320, 38);
+				ctx.strokeStyle = "gray";
+				ctx.lineWidth = 1;
+				ctx.stroke();
+
+				// list each vehicle's stats
+				let textY = 55;
+				for (let vehicle_id in vehicles) {
+					let v		= vehicles[vehicle_id];
+					let shortId = vehicle_id.substring(0, 4);
+					
+					let speedStr	= v.speed.toFixed(1).padStart(4, ' ');
+					let accStr		= (v.acceleration || 0).toFixed(1).padStart(4, ' ');
+					
+					let stateStr	= v.state === "NORMAL" ? "NORM" : "FAIL";
+					let navStr		= v.nav_state.substring(0, 8); // e.g. APPROACH, IN_ROUND, EXITING
+					
+					let text = `[${shortId}] SPD:${speedStr} ACC:${accStr} | ${stateStr} | ${navStr}`;
+					
+					ctx.fillStyle = v.state === "FAILSAFE" ? "#ff4444" : "#00ff00";
+					ctx.font = "13px monospace";
+					ctx.fillText(text, 20, textY);
+					
+					// move down for the next line
+					textY += 20;
+				}
+				
 			} catch (err) {
 				console.error("Error fetching state:", err);
 			}

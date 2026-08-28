@@ -8,8 +8,9 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 
+from common.const import ROUNDABOUT_N_ROADS, ROUNDABOUT_RADIUS
 from common.get_env import config
-from common.models.models import VehicleState
+from common.models.models import Vehicle
 
 
 
@@ -27,7 +28,7 @@ async def mqtt_listener():
 		print("Viewer subscribed to telemetry...")
 		async for message in client.messages:
 			payload						= json.loads(message.payload)
-			vehicle						= VehicleState(**payload)
+			vehicle						= Vehicle(**payload)
 			vehicles_state[vehicle.id]	= vehicle
 
 # https://fastapi.tiangolo.com/advanced/events/#use-case
@@ -44,6 +45,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
+
+
+@app.get("/api/config")
+async def get_config():
+    return {
+        "n_roads"	: ROUNDABOUT_N_ROADS,
+        "radius"	: ROUNDABOUT_RADIUS,
+        "scale"		: 2.0	# drawing scaling
+    }
 
 
 @app.get("/api/state")

@@ -39,5 +39,7 @@ class Config:
 	TOPIC_VEHICLE_COMMAND_SUFFIX	= get_env_or_exit("TOPIC_VEHICLE_COMMAND_SUFFIX")
 	TOPIC_VEHICLE_TELEMETRY_SUFFIX	= get_env_or_exit("TOPIC_VEHICLE_TELEMETRY_SUFFIX")
 
+	DEBUG_MODE	= get_env_or_exit("DEBUG_MODE").lower() == "true"
+
 
 config = Config()

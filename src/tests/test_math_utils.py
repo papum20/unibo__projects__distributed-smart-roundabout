@@ -1,6 +1,3 @@
-# tests/test_math_utils.py
-import math
-
 from  common.const import (
 	ROUNDABOUT_POS,
 	ROUNDABOUT_RADIUS
@@ -77,4 +74,24 @@ def test_dist_to_roundabout():
 	dist_i1 = get_dist_to_roundabout(pi1)
 	assert dist_i1 == 0.0
 
-	
+
+
+def test_move_towards_center():
+    
+    pos_start = Position(x=10.0, y=0.0)
+    # after 1 second at 2 m/s, it should be at (8, 0)
+    new_pos = move(pos_start, speed=2.0, dt=1.0)
+    assert new_pos.x == 8.0
+    assert new_pos.y == 0.0
+    
+    pos_start_y = Position(x=0.0, y=10.0)
+    new_pos_y = move(pos_start_y, speed=3.0, dt=1.0)
+    assert new_pos_y.x == 0.0
+    assert new_pos_y.y == 7.0
+
+    # from (3, 4), distance to center is 5
+    pos_diag = Position(x=3.0, y=4.0)
+    new_pos_diag = move(pos_diag, speed=5.0, dt=1.0)
+    assert round(new_pos_diag.x, 5) == 0.0
+    assert round(new_pos_diag.y, 5) == 0.0
+
