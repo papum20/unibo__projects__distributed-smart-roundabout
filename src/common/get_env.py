@@ -8,9 +8,6 @@ from dotenv import load_dotenv
 
 load_dotenv() 
 
-# Configure Logging
-logging.basicConfig(level=logging.INFO)
-
 
 
 def get_env_or_exit(key: str) -> str:
@@ -43,3 +40,8 @@ class Config:
 
 
 config = Config()
+
+
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO if not config.DEBUG_MODE else logging.DEBUG)

@@ -8,7 +8,13 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-from common.const import ROUNDABOUT_N_ROADS, ROUNDABOUT_RADIUS
+from common.const import (
+	ROUNDABOUT_RADIUS,
+	ROUNDABOUT_N_ROADS,
+	LANE_WIDTH,
+	CAR_LENGTH,
+	CAR_WIDTH
+)
 from common.get_env import config
 from common.models.models import Vehicle
 
@@ -34,13 +40,13 @@ async def mqtt_listener():
 # https://fastapi.tiangolo.com/advanced/events/#use-case
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    listener_task = asyncio.create_task(mqtt_listener())
+	listener_task = asyncio.create_task(mqtt_listener())
 
-    try:
-        yield
-    finally:
-        listener_task.cancel()
-        await asyncio.gather(listener_task, return_exceptions=True)
+	try:
+		yield
+	finally:
+		listener_task.cancel()
+		await asyncio.gather(listener_task, return_exceptions=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -50,11 +56,14 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/api/config")
 async def get_config():
-    return {
-        "n_roads"	: ROUNDABOUT_N_ROADS,
-        "radius"	: ROUNDABOUT_RADIUS,
-        "scale"		: 2.0	# drawing scaling
-    }
+	return {
+		"n_roads"		: ROUNDABOUT_N_ROADS,
+		"radius"		: ROUNDABOUT_RADIUS,
+		"lane_width"	: LANE_WIDTH,
+		"car_length"	: CAR_LENGTH,
+		"car_width"		: CAR_WIDTH,
+		"scale"			: 2.5	# drawing scaling
+	}
 
 
 @app.get("/api/state")

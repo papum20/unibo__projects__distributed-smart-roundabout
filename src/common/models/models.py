@@ -39,9 +39,12 @@ class Vehicle(BaseModel):
 
 	entry_road		: int				= 0
 	exit_road		: int				= 0
+	angle_traveled	: float				= 0.0	# traveled distance, to track if we've done a full lap
 	nav_state		: VehicleNavState	= VehicleNavState.APPROACHING
 
-	params			: VehicleParams = VehicleParams()
+	color_hue				: int			= 220	# base car color
+	color_lightness_perc	: float			= 50.0	# lightness (for all colors, including failsafe mode)
+	params					: VehicleParams = VehicleParams()
 
 
 class Command(BaseModel):

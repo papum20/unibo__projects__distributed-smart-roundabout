@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import math
 import random
@@ -8,53 +9,46 @@ import aiomqtt
 from uuid import uuid4
 
 from common import math_utils, physics, roundabout
-from common.const import FRAMERATE, AREA_RADIUS, ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_ANGLE_TOL_RAD
+from common.const import (
+	FRAMERATE,
+	AREA_RADIUS,
+	ROUNDABOUT_N_ROADS,
+	ROUNDABOUT_POS,
+	ROUNDABOUT_RADIUS,
+	VEHICLE_ANGLE_TOL_RAD,
+	VEHICLE_ANGLE_TRAVELED_MIN_RAD
+)
 from common.get_env import config
 from common.models.models import Command, Position, Vehicle, VehicleNavState, VehicleState
 
 
 
-logging.basicConfig(level=logging.INFO if not config.DEBUG_MODE else logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-TIMER_STATE_S				= 1.0 / FRAMERATE
 TIMER_NETWORK_FAILSAFE_S	= 2.0
 
 
 vehicle_id = str(uuid4())
 logger.info("Generated vehicle_id: %s", vehicle_id)
 
-vehicle = Vehicle(
-	id			= vehicle_id,
-	pos			= Position(x=45.0, y=9.0),
-	pos_angle	= 0.0,
-	speed		= 10.0
-)
+class RuntimeState:
+	def __init__(self):
+		self.vehicle = Vehicle(
+			id			= vehicle_id,
+			pos			= Position(x=45.0, y=9.0),
+			pos_angle	= 0.0,
+			speed		= 10.0
+		)
+
+		# global variables for network state
+		self.latest_command			= Command(target_acceleration=0.0)
+		self.last_net_update_time	= time.time()
+
+state = RuntimeState()
 
 
 
-def evaluate_failsafe(
-	vehicle:			Vehicle,
-	current_time:		float,
-	last_net_update_t:	float,
-	timeout_limit:		float = TIMER_NETWORK_FAILSAFE_S
-) -> tuple[Vehicle, Command]:
-	"""
-	Check if the network connection to the controller is lost and, in case, go into FAILSAFE mode.
-	@return an updated vehicle state and a Command to self.
-	"""
-	if current_time - last_net_update_t > timeout_limit:
-		updated_vehicle	= vehicle.model_copy(update={"state": VehicleState.FAILSAFE})
-		brake_command	= Command(target_acceleration=-5.0)
-		logger.warning("Network lost. FAILSAFE triggered.")
-		return updated_vehicle, brake_command
-		
-	# do nothing (listen to controller commands)
-	return vehicle, Command(target_acceleration=0.0)
-
-
-
-def navigate_vehicle(dt: float, v: Vehicle = vehicle) -> Vehicle:
+def navigate_vehicle(dt: float, v: Vehicle) -> Vehicle:
 	if v.speed == 0:
 		# stopped, do not move
 		return v
@@ -71,17 +65,23 @@ def navigate_vehicle(dt: float, v: Vehicle = vehicle) -> Vehicle:
 			logger.info("Vehicle %s entered the roundabout (IN_ROUNDABOUT) on road %d", v.id, v.entry_road)
 			
 	elif v.nav_state == VehicleNavState.IN_ROUNDABOUT:
+		old_angle	= v.pos_angle
+
 		v.pos_angle, v.pos = physics.move_on_circle(
 			ROUNDABOUT_POS, ROUNDABOUT_RADIUS, v.pos_angle, v.speed, dt
 		)
+
+		angle_diff_frame = (v.pos_angle - old_angle) % (2 * math.pi)
+		v.angle_traveled += angle_diff_frame
 		
 		# check if we reached the exit road
 		exit_angle = roundabout.get_road_angle(v.exit_road)
 		angle_diff = abs(v.pos_angle - exit_angle)
 		# handle wrap-around at 2*pi
 		angle_diff = min(angle_diff, 2*math.pi - angle_diff) 
-		
-		if angle_diff < VEHICLE_ANGLE_TOL_RAD:
+
+		# make sure to not exit immediately (if entry==exit)
+		if angle_diff < VEHICLE_ANGLE_TOL_RAD and v.angle_traveled > VEHICLE_ANGLE_TRAVELED_MIN_RAD:
 			v.nav_state = VehicleNavState.EXITING
 			logger.info("Vehicle %s is exiting the roundabout (EXITING) on road %d", v.id, v.exit_road)
 
@@ -93,13 +93,13 @@ def navigate_vehicle(dt: float, v: Vehicle = vehicle) -> Vehicle:
 	return v
 
 
-def reset_vehicle(v: Vehicle, n_roads: int=ROUNDABOUT_N_ROADS) -> Vehicle:
+def reset_vehicle(v: Vehicle, n_roads: int=ROUNDABOUT_N_ROADS):
 	"""Spawn or respawns the vehicle on a random road"""
 	road_entry	= random.randint(0, n_roads - 1)
 	road_exit	= random.randint(0, n_roads - 1)
 	
 	# Random distance between 50 and 80 meters away from the roundabout
-	spawn_dist = random.uniform(50.0, 80.0) 
+	spawn_dist	= random.uniform(50.0, 80.0) 
 	start_x, start_y = roundabout.get_point_on_road(road_entry, spawn_dist, n_roads=n_roads)
 	
 	v.pos			= Position(x=start_x, y=start_y)
@@ -109,49 +109,76 @@ def reset_vehicle(v: Vehicle, n_roads: int=ROUNDABOUT_N_ROADS) -> Vehicle:
 	v.entry_road	= road_entry
 	v.exit_road		= road_exit
 	v.nav_state		= VehicleNavState.APPROACHING
+	v.color_hue				= random.randint(200, 260)		# random shade of blue
+	v.color_lightness_perc	= random.uniform(40.0, 70.0)
 
-	global vehicle
-	vehicle = v
 	logger.info("Reset vehicle to: %s", v.model_dump_json())
-	return v
 
 
 
-async def main():
-	global vehicle
+
+async def listen_commands(client, s: RuntimeState = state):
+	command_topic = f"{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_COMMAND_SUFFIX}"
+	await client.subscribe(command_topic)
+	
+	async for message in client.messages:
+		payload						= json.loads(message.payload)
+		s.latest_command		= Command(**payload)
+		s.last_net_update_time	= time.time()
+		logger.debug("Received command: %s", s.latest_command)
+
+
+
+async def physics_loop(client, s: RuntimeState = state):
+	last_time = time.time()
+	
+	while True:
+		current_time = time.time()
+		dt = current_time - last_time
+
+		# check for command, otherwise failsafe
+		if current_time - s.last_net_update_time > TIMER_NETWORK_FAILSAFE_S:
+			s.vehicle.state		= VehicleState.FAILSAFE
+			active_command		= Command(target_acceleration=-s.vehicle.params.max_brake)
+			logger.warning("Network lost. FAILSAFE triggered.")
+		else:
+			s.vehicle.state	= VehicleState.NORMAL
+			active_command	= s.latest_command
+
+		s.vehicle.acceleration = active_command.target_acceleration
+		s.vehicle.speed = physics.update_speed(
+			speed		= s.vehicle.speed, 
+			acc			= s.vehicle.acceleration, 
+			dt			= dt, 
+			max_speed	= s.vehicle.params.max_speed
+		)
+		s.vehicle = navigate_vehicle(dt, s.vehicle)
+
+		if s.vehicle.nav_state == VehicleNavState.EXITING and math_utils.get_dist(s.vehicle.pos, ROUNDABOUT_POS) > AREA_RADIUS:
+			reset_vehicle(s.vehicle)
+
+		last_time = current_time
+
+		topic = f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}'
+		await client.publish(topic, payload=s.vehicle.model_dump_json())
+		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
+
+		await asyncio.sleep(1.0 / FRAMERATE)
+
+
+async def main(s: RuntimeState = state):
+	reset_vehicle(s.vehicle)
+	# random boot delay so cars don't overlap on startup
+	await asyncio.sleep(random.uniform(0.0, 5.0))
+	
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
-		last_time				= time.time()
-		last_net_update_time	= time.time()
-		
-		while True:
-			current_time	= time.time()
-			dt				= current_time - last_time
-
-
-			vehicle, command = evaluate_failsafe(vehicle, current_time, last_net_update_time)
-
-			vehicle.speed = physics.update_speed(
-				speed		= vehicle.speed, 
-				acc			= command.target_acceleration, 
-				dt			= dt, 
-				max_speed	= vehicle.params.max_speed
-			)
-			vehicle = navigate_vehicle(dt)
-
-			last_time				= current_time
-			last_net_update_time	= current_time
-
-			if vehicle.nav_state == VehicleNavState.EXITING and math_utils.get_dist(vehicle.pos, ROUNDABOUT_POS) > AREA_RADIUS:
-				vehicle = reset_vehicle(vehicle)
-
-
-			await client.publish(f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', payload=vehicle.model_dump_json())
-			logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', vehicle.model_dump_json())
-
-			await asyncio.sleep(TIMER_STATE_S)
+		# run both concurrently
+		await asyncio.gather(
+			listen_commands(client, s),
+			physics_loop(client, s)
+		)
 
 
 
 if __name__ == "__main__":
-	reset_vehicle(vehicle)
 	asyncio.run(main())

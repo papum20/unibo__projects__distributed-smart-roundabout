@@ -3,22 +3,62 @@
 <head>
 	<title>Smart Roundabout Viewer</title>
 	<style>
-		body { background-color: #222; color: white; font-family: Arial; text-align: center; }
-		canvas { background-color: #333; border: 2px solid #555; margin-top: 20px; }
+		body { 
+			background-color: #111; 
+			color: white; 
+			font-family: Arial, sans-serif; 
+			display: flex; 
+			align-items: flex-start; /* THIS PREVENTS CANVAS STRETCHING */
+			padding: 20px;
+		}
+		#dashboard { 
+			width: 420px; /* Slightly wider to fit single-line stats */
+			max-height: 900px; /* Same height as canvas */
+			overflow-y: auto; /* ADDS SCROLLBAR IF TOO MANY CARS */
+			margin-right: 20px; 
+			background: #222; 
+			padding: 15px; 
+			border-radius: 8px; 
+			border: 1px solid #444; 
+		}
+		canvas { 
+			background-color: #222; 
+			border: 2px solid #555; 
+			border-radius: 8px;
+			/* Lock canvas size strictly */
+			min-width: 900px;
+			min-height: 900px;
+		}
+		.hud-line { 
+			margin: 5px 0; 
+			font-size: 13px; 
+			font-family: monospace; 
+			border-bottom: 1px solid #333; 
+			padding-bottom: 5px;
+		}
+		.status-NORMAL { color: #00ff00; }
+		.status-FAILSAFE { color: #ff3333; }
 	</style>
 </head>
 <body>
 	<h1>Smart Roundabout Orchestrator</h1>
-	<canvas id="simCanvas" width="800" height="800"></canvas>
+
+	<div id="dashboard">
+		<h2>Live Telemetry</h2>
+		<hr style="border-color: #444;">
+		<div id="telemetry-list"></div>
+	</div>
+
+	<canvas id="simCanvas" width="900" height="900"></canvas>
 
 	<script>
-		const canvas    = document.getElementById("simCanvas");
-		const ctx       = canvas.getContext("2d");
+		const canvas   		= document.getElementById("simCanvas");
+		const ctx      		= canvas.getContext("2d");
+		const telemetryList = document.getElementById("telemetry-list");
 
 		// center of canvas
-		const offsetX = 400;
-		const offsetY = 400;
-		const roundaboutRadius = 100; // visual radius
+		const offsetX = 450;
+		const offsetY = 450;
 
 		let sysConfig = null;
 
@@ -39,38 +79,99 @@
 				// clear the screen
 				ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-				// draw the rRoundabout center
+				// scaled sizes
+				const sRadius	= sysConfig.radius * sysConfig.scale;
+				const sLaneW	= sysConfig.lane_width * sysConfig.scale;
+				const roadWidth = sLaneW * 2;
+				
+				// draw each road
+				for (let i = 0; i < sysConfig.n_roads; i++) {
+					let angle = (2 * Math.PI / sysConfig.n_roads) * i;
+					
+					ctx.save();
+					ctx.translate(offsetX, offsetY);
+					ctx.rotate(angle);
+					
+					// asphalt
+					ctx.fillStyle = "#4a4a4a";
+					ctx.fillRect(sRadius, -roadWidth/2, 1000, roadWidth);
+					
+					// dashed center line
+					ctx.beginPath();
+					ctx.setLineDash([15, 15]);
+					ctx.moveTo(sRadius, 0);
+					ctx.lineTo(1000, 0);
+					ctx.strokeStyle = "#ffeb3b";
+					ctx.lineWidth = 2;
+					ctx.stroke();
+					
+					ctx.restore();
+				}
+
+				// draw roundabout
 				ctx.beginPath();
-				ctx.arc(offsetX, offsetY, sysConfig.radius * sysConfig.scale, 0, 2 * Math.PI);
+				ctx.setLineDash([]);
+				ctx.arc(offsetX, offsetY, sRadius + (sLaneW/2), 0, 2 * Math.PI);
+				ctx.strokeStyle = "#4a4a4a";
+				ctx.lineWidth = roadWidth;
+				ctx.stroke();
+
+				// roundabout outer border
+				ctx.beginPath();
+				ctx.arc(offsetX, offsetY, sRadius - (sLaneW/2), 0, 2 * Math.PI);
 				ctx.strokeStyle = "white";
-				ctx.lineWidth	= 4;
+				ctx.lineWidth = 2;
+				ctx.stroke();
+
+				// roundabout inner island border
+				ctx.beginPath();
+				ctx.arc(offsetX, offsetY, sRadius - sLaneW, 0, 2 * Math.PI);
+				ctx.strokeStyle = "white";
+				ctx.lineWidth = 2;
 				ctx.stroke();
 
 				// draw each car
 				for (let vehicle_id in vehicles) {
-					let vehicle = vehicles[vehicle_id];
+					let v = vehicles[vehicle_id];
 					
 					// car.x and car.y are the logical coordinates.
-					// We add offsetX and offsetY to place them correctly on the 800x800 screen.
-					let drawX = (vehicle.pos.x * sysConfig.scale) + offsetX;
-					let drawY = (vehicle.pos.y * sysConfig.scale) + offsetY;
+					// We add offsetX and offsetY to place them correctly on the screen's rectangle
+					let drawX	= (v.pos.x * sysConfig.scale) + offsetX;
+					let drawY	= (v.pos.y * sysConfig.scale) + offsetY;
+					let vLen	= sysConfig.car_length * sysConfig.scale;
+					let vWid	= sysConfig.car_width * sysConfig.scale;
 
-					// draw car dot
-					ctx.beginPath();
-					ctx.arc(drawX, drawY, 8, 0, 2 * Math.PI);
-					ctx.fillStyle = vehicle.state === "FAILSAFE" ? "red" : "cyan";
-					ctx.fill();
+					ctx.save();
+					ctx.translate(drawX, drawY);
 
-					// draw car ID text
+					// calculate rotation angle based on state
+					let drawAngle = v.pos_angle;
+					if (v.nav_state === "APPROACHING") drawAngle += Math.PI;		// point towards center
+					if (v.nav_state === "IN_ROUNDABOUT") drawAngle += Math.PI / 2;	// tangent to circle
+					
+					ctx.rotate(drawAngle);
+					
+					// rectangle body
+					const lightness = v.color_lightness_perc ?? 50;
+					ctx.fillStyle = (v.state === "FAILSAFE") ? `hsl(0, 100%, ${lightness}%)` : `hsl(${v.color_hue}, 100%, ${lightness}%)`;
+					ctx.fillRect(-vLen/2, -vWid/2, vLen, vWid);
+
+					// windshield (to show front direction clearly)
+					ctx.fillStyle = "#111";
+					ctx.fillRect((vLen/2) - 4, -vWid/2 + 1, 3, vWid - 2);
+
+					ctx.restore();
+
+					// car ID text
 					ctx.fillStyle	= "white";
-					ctx.font		= "12px Arial";
+					ctx.font		= "11px monospace";
 					ctx.fillText(vehicle_id.substring(0,4), drawX + 12, drawY + 4);
 				}
 
 				/*
 				 * info (legend, telemetry)
 				 */
-
+				/*
 				const nVehicles = Object.keys(vehicles).length;
 				const boxHeight = 35 + (nVehicles * 20);
 
@@ -89,28 +190,33 @@
 				ctx.strokeStyle = "gray";
 				ctx.lineWidth = 1;
 				ctx.stroke();
+				*/
 
 				// list each vehicle's stats
-				let textY = 55;
+				let htmlContent = "";
 				for (let vehicle_id in vehicles) {
 					let v		= vehicles[vehicle_id];
 					let shortId = vehicle_id.substring(0, 4);
 					
-					let speedStr	= v.speed.toFixed(1).padStart(4, ' ');
-					let accStr		= (v.acceleration || 0).toFixed(1).padStart(4, ' ');
+					let speedStr	= v.speed.toFixed(1).padStart(4, '0');
+					let accStr = (v.acceleration > 0 ? "+" : "") + v.acceleration.toFixed(1).padStart(4, '0');
+					let navStr = "APP";
+					if (v.nav_state === "IN_ROUNDABOUT") navStr = "RND";
+					if (v.nav_state === "EXITING") navStr = "EXI";
 					
-					let stateStr	= v.state === "NORMAL" ? "NORM" : "FAIL";
-					let navStr		= v.nav_state.substring(0, 8); // e.g. APPROACH, IN_ROUND, EXITING
-					
-					let text = `[${shortId}] SPD:${speedStr} ACC:${accStr} | ${stateStr} | ${navStr}`;
-					
-					ctx.fillStyle = v.state === "FAILSAFE" ? "#ff4444" : "#00ff00";
-					ctx.font = "13px monospace";
-					ctx.fillText(text, 20, textY);
-					
-					// move down for the next line
-					textY += 20;
+					let stateClass = `status-${v.state}`;
+					let stateShort = v.state === "NORMAL" ? "NORM" : "FAIL";
+
+					htmlContent += `
+						<div class="hud-line">
+							<!-- Colored ID matching the car -->
+							<strong style="color: hsl(${v.color_hue}, 100%, 70%)">[${shortId}]</strong> 
+							<span class="${stateClass}">${stateShort}</span> | 
+							S:${speedStr} A:${accStr} | 
+							${navStr} (${v.entry_road}➔${v.exit_road})
+						</div>`;
 				}
+				telemetryList.innerHTML = htmlContent;
 				
 			} catch (err) {
 				console.error("Error fetching state:", err);
