@@ -49,4 +49,10 @@ class Vehicle(BaseModel):
 
 class Command(BaseModel):
 	target_acceleration: float	# m/s^2
-	
+
+class SystemCommandValue(Enum):
+	PAUSE	= "PAUSE"
+	RESUME	= "RESUME"
+
+class SystemCommand(BaseModel):
+	command: SystemCommandValue

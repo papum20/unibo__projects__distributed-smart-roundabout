@@ -35,7 +35,7 @@ services:
     env_file:
     - bash-scripts/clean.env.generated
     deploy:
-      replicas: 40 #10
+      replicas: 20 #10
     networks:
       - broker-network
 

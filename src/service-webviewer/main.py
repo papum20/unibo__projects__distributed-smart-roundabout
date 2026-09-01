@@ -16,7 +16,7 @@ from common.const import (
 	CAR_WIDTH
 )
 from common.get_env import config
-from common.models.models import Vehicle
+from common.models.models import Vehicle, SystemCommand
 
 
 
@@ -58,12 +58,21 @@ app = FastAPI(lifespan=lifespan)
 async def get_config():
 	return {
 		"n_roads"		: ROUNDABOUT_N_ROADS,
-		"radius"		: ROUNDABOUT_RADIUS,
+		"r_radius"		: ROUNDABOUT_RADIUS,
 		"lane_width"	: LANE_WIDTH,
 		"car_length"	: CAR_LENGTH,
 		"car_width"		: CAR_WIDTH,
 		"scale"			: 2.5	# drawing scaling
 	}
+
+
+@app.post("/api/control")
+async def control_sim(cmd: SystemCommand):
+	# Connect to broker and send the pause/resume command
+	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client: # adjust hostname if needed
+		payload = json.dumps({"command": cmd.command.value})
+		await client.publish("system/control", payload=payload)
+	return {"status": "ok", "command": cmd}
 
 
 @app.get("/api/state")
@@ -79,4 +88,8 @@ async def serve_frontend():
 
 
 if __name__ == "__main__":
-	uvicorn.run(app, host="0.0.0.0", port=config.PORT_WEBVIEWER)
+	uvicorn.run(
+		app, host="0.0.0.0", port=config.PORT_WEBVIEWER,
+		access_log=False,
+		#log_level="warning"
+	)

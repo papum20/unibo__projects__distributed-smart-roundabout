@@ -4,7 +4,7 @@ import logging
 import math
 import aiomqtt
 
-from common import math_utils, roundabout
+from common import math_utils, physics, roundabout
 from common.const import FRAMERATE, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, CAR_LENGTH
 from common.get_env import config
 from common.models.models import Command, Vehicle, VehicleNavState
@@ -17,21 +17,27 @@ active_vehicles: dict[str, Vehicle] = {}
 
 
 
+def safety_distance(v: Vehicle, margin: float) -> float:
+	"""
+	Calculate a dynamic safety distance based on the vehicle's speed.
+	@param margin: additional safety margin (e.g. half a car length, if calculating it from the car on front)
+	"""
+	# dynamic safety distance based on speed (1s reaction time)
+	return (v.speed * 1.0) + CAR_LENGTH / 2.0 + margin
+
+
 def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> dict[str, Command]:
 	"""
 	Take a list of all current vehicles.
 	@return a dictionary mapping vehicle_id -> Command.
 	"""
 	# default: tell everyone to maintain speed
-	commands = {v.id: Command(target_acceleration=0.0) for v in vehicles}
+	commands = {v.id: Command(target_acceleration=v.params.max_accel) for v in vehicles}
 	
 	for v1 in vehicles:
 		for v2 in vehicles:
 			if v1.id == v2.id: continue
 
-			# dynamic safety distance based on speed
-			safe_dist = (v1.speed * 1.0) + CAR_LENGTH + 3.0
-			
 			# approaching, tailgating
 			if v1.nav_state == VehicleNavState.APPROACHING and v2.nav_state == VehicleNavState.APPROACHING:
 				if v1.entry_road == v2.entry_road:
@@ -39,7 +45,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 					dist_v2 = math_utils.get_dist(v2.pos, ROUNDABOUT_POS)
 					
 					# v1 too close behind v2
-					if dist_v1 > dist_v2 and (dist_v1 - dist_v2) < safe_dist:
+					if dist_v1 > dist_v2 and (dist_v1 - dist_v2) < safety_distance(v1, margin=CAR_LENGTH/2.0):
 						commands[v1.id].target_acceleration = -v1.params.max_brake
 
 
@@ -49,7 +55,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				arc_dist	= angle_diff * ROUNDABOUT_RADIUS
 				
 				# v1 too close behind v2
-				if 0 < arc_dist < safe_dist:
+				if 0 < arc_dist < safety_distance(v1, margin=CAR_LENGTH/2.0):
 					commands[v1.id].target_acceleration = -v1.params.max_brake
 
 
@@ -70,18 +76,14 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				if v2_dist_to_exit < v2_dist_to_conflict:
 					continue
 				
-				# Time-To-Arrival (TTA)
-				v2_speed = max(v2.speed, 0.1)	# prevent div by zero
-				v1_speed = max(v1.speed, 0.1)
-				
-				tta_other = v2_dist_to_conflict / v2_speed
-				
+				# time to arrival (TTA)
+				v2_tta = physics.vehicle_tta(v2, v2_dist_to_conflict)
 				v1_dist_to_conflict	= math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
-				v1_tta				= v1_dist_to_conflict / v1_speed
+				v1_tta				= physics.vehicle_tta(v1, v1_dist_to_conflict)
 				
 				# If v1 will arrive around the same time as v2 passes by,
 				# slow down instead of having to stop
-				if abs(v1_tta - tta_other) < conflict_time_margin_s:
+				if abs(v1_tta - v2_tta) < conflict_time_margin_s:
 					# a light brake is often enough
 					commands[v1.id].target_acceleration = -2.0
 			

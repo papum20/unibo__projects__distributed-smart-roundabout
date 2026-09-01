@@ -14,3 +14,8 @@ Since version 2.0, Mosquitto is very secure by default (it blocks external conne
 for:
 * model-first development
 * runtime validation
+
+### Physics
+
+simplified physics model:
+* uniformly accelerated motion

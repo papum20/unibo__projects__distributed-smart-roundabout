@@ -52,6 +52,8 @@
 	<canvas id="simCanvas" width="900" height="900"></canvas>
 
 	<script>
+		const STATE_FETCH_MS = 1000 / 15.0;
+		
 		const canvas   		= document.getElementById("simCanvas");
 		const ctx      		= canvas.getContext("2d");
 		const telemetryList = document.getElementById("telemetry-list");
@@ -68,6 +70,23 @@
 		}
 
 
+		let isPaused = false;
+
+		window.addEventListener('keydown', async (e) => {
+			if (e.code === 'Space') {
+				e.preventDefault();	// stop the page from scrolling down
+				isPaused = !isPaused; // toggle state
+				
+				const cmd = isPaused ? "PAUSE" : "RESUME";
+				await fetch('/api/control', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ command: cmd })
+				});
+			}
+		});
+
+
 		async function fetchStateAndDraw() {
 			// get config once on load
 			if (!sysConfig) await fetchConfig();
@@ -80,7 +99,7 @@
 				ctx.clearRect(0, 0, canvas.width, canvas.height);
 
 				// scaled sizes
-				const sRadius	= sysConfig.radius * sysConfig.scale;
+				const sRadius	= sysConfig.r_radius * sysConfig.scale;
 				const sLaneW	= sysConfig.lane_width * sysConfig.scale;
 				const roadWidth = sLaneW * 2;
 				
@@ -90,7 +109,8 @@
 					
 					ctx.save();
 					ctx.translate(offsetX, offsetY);
-					ctx.rotate(angle);
+					// negative angle (html draws Y inverted)
+    				ctx.rotate(-angle); 
 					
 					// asphalt
 					ctx.fillStyle = "#4a4a4a";
@@ -137,23 +157,27 @@
 					// car.x and car.y are the logical coordinates.
 					// We add offsetX and offsetY to place them correctly on the screen's rectangle
 					let drawX	= (v.pos.x * sysConfig.scale) + offsetX;
-					let drawY	= (v.pos.y * sysConfig.scale) + offsetY;
+					// subtract Y so positive Y goes UP on the screen (to match simulation)
+					let drawY = offsetY - (v.pos.y * sysConfig.scale);	
 					let vLen	= sysConfig.car_length * sysConfig.scale;
 					let vWid	= sysConfig.car_width * sysConfig.scale;
 
 					ctx.save();
 					ctx.translate(drawX, drawY);
 
-					// calculate rotation angle based on state
-					let drawAngle = v.pos_angle;
-					if (v.nav_state === "APPROACHING") drawAngle += Math.PI;		// point towards center
-					if (v.nav_state === "IN_ROUNDABOUT") drawAngle += Math.PI / 2;	// tangent to circle
+					// calculate rotation angle based on state (neg angle, html draws Y inverted)
+					let drawAngle = -v.pos_angle;
+					if (v.nav_state === "APPROACHING")		drawAngle -= Math.PI;		// point towards center
+					if (v.nav_state === "IN_ROUNDABOUT")	drawAngle -= Math.PI / 2;	// tangent to circle
 					
 					ctx.rotate(drawAngle);
 					
 					// rectangle body
 					const lightness = v.color_lightness_perc ?? 50;
-					ctx.fillStyle = (v.state === "FAILSAFE") ? `hsl(0, 100%, ${lightness}%)` : `hsl(${v.color_hue}, 100%, ${lightness}%)`;
+					const vColor = (v.state === "FAILSAFE")
+						? `hsl(0, 100%, ${lightness}%)`
+						: `hsl(${v.color_hue}, 100%, ${lightness}%)`;
+					ctx.fillStyle = vColor;
 					ctx.fillRect(-vLen/2, -vWid/2, vLen, vWid);
 
 					// windshield (to show front direction clearly)
@@ -163,9 +187,19 @@
 					ctx.restore();
 
 					// car ID text
-					ctx.fillStyle	= "white";
-					ctx.font		= "11px monospace";
-					ctx.fillText(vehicle_id.substring(0,4), drawX + 12, drawY + 4);
+					const vAccSign	= v.acceleration > 0 ? "+" : v.acceleration < 0 ? "-" : "=";
+					const vLabel 	= `${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${vAccSign}`;
+
+					ctx.font = "11px monospace";
+					const labelX = drawX + 12;
+					const labelY = drawY + 12;
+					const labelW = ctx.measureText(vLabel).width + 8;
+
+					ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
+					ctx.fillRect(labelX - 4, labelY - 10, labelW, 14);
+
+					ctx.fillStyle = vColor;
+					ctx.fillText(vLabel, labelX, labelY);
 				}
 
 				/*
@@ -217,13 +251,24 @@
 						</div>`;
 				}
 				telemetryList.innerHTML = htmlContent;
+
+				
+				if (isPaused) {
+					ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+					ctx.fillRect(0, 0, canvas.width, canvas.height);
+					
+					ctx.fillStyle = "white";
+					ctx.font = "bold 48px Arial";
+					ctx.textAlign = "center";
+					ctx.fillText("PAUSED", canvas.width / 2, canvas.height / 2);
+					ctx.textAlign = "left"; // reset for next frame
+				}
 				
 			} catch (err) {
 				console.error("Error fetching state:", err);
 			}
 
-			// ask the browser to run this loop again for the next frame (~60 FPS)
-			requestAnimationFrame(fetchStateAndDraw);
+			setTimeout(fetchStateAndDraw, STATE_FETCH_MS);
 		}
 
 		fetchStateAndDraw();

@@ -29,6 +29,6 @@ def get_point_on_road(
 	cy = ROUNDABOUT_POS.y + total_dist * math.sin(angle)
 	
 	# offset perpendicularly to create lanes
-	px = cx + lane_offset * math.sin(angle)
-	py = cy - lane_offset * math.cos(angle)
+	px = cx - lane_offset * math.sin(angle)
+	py = cy + lane_offset * math.cos(angle)
 	return px, py
