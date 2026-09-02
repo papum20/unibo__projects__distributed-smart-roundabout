@@ -8,26 +8,29 @@
 			color: white; 
 			font-family: Arial, sans-serif; 
 			display: flex; 
-			align-items: flex-start; /* THIS PREVENTS CANVAS STRETCHING */
+			align-items: flex-start; /* prevent canvas stretching */
 			padding: 20px;
 		}
 		#dashboard { 
-			width: 420px; /* Slightly wider to fit single-line stats */
-			max-height: 900px; /* Same height as canvas */
-			overflow-y: auto; /* ADDS SCROLLBAR IF TOO MANY CARS */
+			width: 420px; /* slightly wider to fit single-line stats */
+			height: calc(100vh - 40px); /* almost as tall as viewport */
+			max-height: none;
+			overflow-y: auto; /* adds scrollbar if too many items */
 			margin-right: 20px; 
 			background: #222; 
 			padding: 15px; 
 			border-radius: 8px; 
 			border: 1px solid #444; 
+			box-sizing: border-box;
 		}
 		canvas { 
-			background-color: #222; 
-			border: 2px solid #555; 
+			width: 900px;
+			height: 900px;
+			flex: 0 0 900px;
+			background-color: #222;
+			border: 2px solid #555;
 			border-radius: 8px;
-			/* Lock canvas size strictly */
-			min-width: 900px;
-			min-height: 900px;
+			box-sizing: border-box;
 		}
 		.hud-line { 
 			margin: 5px 0; 
@@ -47,6 +50,9 @@
 		<h2>Live Telemetry</h2>
 		<hr style="border-color: #444;">
 		<div id="telemetry-list"></div>
+
+		<h3>Precedence Queue</h3>
+    	<div id="precedence-queue"></div>
 	</div>
 
 	<canvas id="simCanvas" width="900" height="900"></canvas>
@@ -92,8 +98,15 @@
 			if (!sysConfig) await fetchConfig();
 
 			try {
-				const response = await fetch('/api/state');
-				const vehicles = await response.json();
+				const response			= await fetch('/api/state');
+				const state				= await response.json();
+				const vehicles			= state.vehicles;
+				const precedenceQueue	= state.precedence_queue;
+
+				const vehicleIds	= Object.keys(vehicles).sort();
+				const vehicleOrder	= new Map(
+					vehicleIds.map((id, index) => [id, index])
+				);
 
 				// clear the screen
 				ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -158,7 +171,7 @@
 					// We add offsetX and offsetY to place them correctly on the screen's rectangle
 					let drawX	= (v.pos.x * sysConfig.scale) + offsetX;
 					// subtract Y so positive Y goes UP on the screen (to match simulation)
-					let drawY = offsetY - (v.pos.y * sysConfig.scale);	
+					let drawY	= offsetY - (v.pos.y * sysConfig.scale);	
 					let vLen	= sysConfig.car_length * sysConfig.scale;
 					let vWid	= sysConfig.car_width * sysConfig.scale;
 
@@ -190,10 +203,22 @@
 					const vAccSign	= v.acceleration > 0 ? "+" : v.acceleration < 0 ? "-" : "=";
 					const vLabel 	= `${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${vAccSign}`;
 
-					ctx.font = "11px monospace";
-					const labelX = drawX + 12;
-					const labelY = drawY + 12;
-					const labelW = ctx.measureText(vLabel).width + 8;
+					ctx.font		= "11px monospace";
+					const labelW	= ctx.measureText(vLabel).width + 8;
+
+					// randomize label position to reduce overlaps, but don't make flicker
+					// (so deterministic based on vehicle ID)
+					const labelOffsets = [
+						[vLen / 2 + 8, -vWid / 2],
+						[vLen / 2 + 8, vWid / 2 + 14],
+						[-vLen / 2 - labelW - 8, -vWid / 2],
+						[-vLen / 2 - labelW - 8, vWid / 2 + 14],
+					];
+					const offsetIndex = vehicleOrder.get(vehicle_id) % labelOffsets.length;
+					const [offsetLabelX, offsetLabelY] = labelOffsets[offsetIndex];
+
+					const labelX = drawX + offsetLabelX;
+					const labelY = drawY + offsetLabelY;
 
 					ctx.fillStyle = "rgba(0, 0, 0, 0.45)";
 					ctx.fillRect(labelX - 4, labelY - 10, labelW, 14);
@@ -226,6 +251,19 @@
 				ctx.stroke();
 				*/
 
+				const queueHtml = precedenceQueue.length === 0
+					? "<div class=\"hud-line\">Empty</div>"
+					: precedenceQueue.map((vehicleId, index) => `
+						<div class="hud-line">
+							<strong>#${index + 1}</strong>
+							${vehicleId.substring(0, 4)}
+						</div>
+					`).join("");
+
+				document.getElementById("precedence-queue").innerHTML = `
+						${queueHtml}
+				`;
+				
 				// list each vehicle's stats
 				let htmlContent = "";
 				for (let vehicle_id in vehicles) {
@@ -241,13 +279,29 @@
 					let stateClass = `status-${v.state}`;
 					let stateShort = v.state === "NORMAL" ? "NORM" : "FAIL";
 
+					const speedColor = v.speed == 0
+						? "#ff3333"
+						: v.speed == v.params.max_speed
+							? "#00ff00"
+							: "white";
+					const accColor = v.acceleration < 0
+						? "#ff3333"
+						: v.acceleration > 0
+							? "#00ff00"
+							: "white";
+
+					const queueIndex	= precedenceQueue.indexOf(vehicle_id);
+					const queuePosition = queueIndex >= 0
+						? ` #${queueIndex + 1}`
+						: "";
+					
 					htmlContent += `
 						<div class="hud-line">
 							<!-- Colored ID matching the car -->
 							<strong style="color: hsl(${v.color_hue}, 100%, 70%)">[${shortId}]</strong> 
 							<span class="${stateClass}">${stateShort}</span> | 
-							S:${speedStr} A:${accStr} | 
-							${navStr} (${v.entry_road}➔${v.exit_road})
+							S:<span style="color: ${speedColor}">${speedStr}</span> A:<span style="color: ${accColor}">${accStr}</span> | 
+							${navStr} (${v.entry_road}➔${v.exit_road})${queuePosition}
 						</div>`;
 				}
 				telemetryList.innerHTML = htmlContent;
@@ -260,7 +314,7 @@
 					ctx.fillStyle = "white";
 					ctx.font = "bold 48px Arial";
 					ctx.textAlign = "center";
-					ctx.fillText("PAUSED", canvas.width / 2, canvas.height / 2);
+					ctx.fillText("PAUSED", canvas.width / 2, canvas.height);
 					ctx.textAlign = "left"; // reset for next frame
 				}
 				

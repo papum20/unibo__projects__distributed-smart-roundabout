@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from common import math_utils, physics, roundabout
 from common.const import (
-	FRAMERATE,
+	UPDATES_P_S_VEHICLE,
 	AREA_RADIUS,
 	LANE_WIDTH,
 	ROAD_LENGTH,
@@ -44,7 +44,7 @@ class RuntimeState:
 		)
 
 		# global variables for network state
-		self.latest_command			= Command(target_acceleration=0.0)
+		self.last_command			= Command(target_acceleration=0.0)
 		self.last_net_update_time	= time.time()
 
 		self.is_paused = False
@@ -151,9 +151,9 @@ async def listen_commands(client, s: RuntimeState = state):
 				logger.info("Simulation RESUMED")
 
 		else:
-			s.latest_command		= Command(**payload)
+			s.last_command			= Command(**payload)
 			s.last_net_update_time	= time.time()
-			logger.debug("Received command: %s", s.latest_command)
+			logger.debug("Received command: %s", s.last_command)
 
 
 
@@ -168,7 +168,7 @@ async def physics_loop(client, s: RuntimeState = state):
 		if s.is_paused:
 			# update the failsafe timer so it doesn't trigger during pause
 			s.last_net_update_time = current_time 
-			await asyncio.sleep(1.0 / FRAMERATE)
+			await asyncio.sleep(1.0 / UPDATES_P_S_VEHICLE)
 			continue
 
 		# check for command, otherwise failsafe
@@ -178,7 +178,7 @@ async def physics_loop(client, s: RuntimeState = state):
 			logger.warning("Network lost. FAILSAFE triggered.")
 		else:
 			s.vehicle.state	= VehicleState.NORMAL
-			active_command	= s.latest_command
+			active_command	= s.last_command
 
 		s.vehicle.acceleration = active_command.target_acceleration
 		s.vehicle.speed = physics.update_speed(
@@ -196,7 +196,7 @@ async def physics_loop(client, s: RuntimeState = state):
 		await client.publish(topic, payload=s.vehicle.model_dump_json())
 		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
 
-		await asyncio.sleep(1.0 / FRAMERATE)
+		await asyncio.sleep(1.0 / UPDATES_P_S_VEHICLE)
 
 
 async def main(s: RuntimeState = state):

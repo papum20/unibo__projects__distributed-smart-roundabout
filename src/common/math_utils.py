@@ -16,6 +16,17 @@ def get_dist(pos1: Position, pos2: Position) -> float:
 	return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
+def get_dist_on_circle(angle1: float, angle2: float, radius: float = ROUNDABOUT_RADIUS) -> float:
+	"""
+	@param angle1: angle of the first point, in radians
+	@param angle2: angle of the second point, in radians
+	@param radius: radius of the circle, in meters
+	@return: distance between the two points on the perimeter of a circle with the given radius, in meters
+	"""
+	angle_diff = (angle2 - angle1) % (2 * math.pi)
+	return angle_diff * radius
+
+
 
 #
 # MOVEMENT (VEHICLE)

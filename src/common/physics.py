@@ -56,28 +56,37 @@ def move_on_circle(center: Position, radius: float, current_angle: float, speed:
 	return new_angle, Position(x=new_x, y=new_y)
 
 
-def vehicle_tta(v, dist: float) -> float:
+
+def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0) -> float:
 	"""
 	Estimate time-to-arrival for a vehicle with constant acceleration
 	and a max-speed cap.
 
 	@param v: vehicle, with current speed, acceleration, max_speed
 	@param dist: remaining distance
+	@param new_acc: optional new acceleration to use instead of the current one
+	@param margin: optional margin, to subtract from the distance (e.g., vehicle length)
 	@return: time in seconds
 	"""
 	if dist <= 0.0:
 		return 0.0
 
+	d = max(0.0, dist - margin)
+
+	if new_acc is not None:
+		acc = max(float(new_acc), 1e-6)
+	else:
+		acc = max(float(v.acceleration), 1e-6)
+
 	v0		= max(float(v.speed), 0.0)
-	acc		= max(float(v.acceleration), 1e-6)
 	vmax	= v.params.max_speed
 
 	# distance to accelerate from v0 to vmax
 	d_acc = (vmax ** 2 - v0 ** 2) / (2.0 * acc)
 
-	if dist <= d_acc:
-		return (math.sqrt(v0 ** 2 + 2 * acc * dist) - v0) / acc
+	if d <= d_acc:
+		return (math.sqrt(v0 ** 2 + 2 * acc * d) - v0) / acc
 
-	t_acc		= (vmax - v0)		/ acc
-	t_cruise	= (dist - d_acc)	/ vmax
+	t_acc		= 		(vmax - v0)	/ acc
+	t_cruise	= max(	(d - d_acc)	/ vmax, 0.0)
 	return t_acc + t_cruise

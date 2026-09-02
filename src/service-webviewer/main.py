@@ -26,14 +26,24 @@ logger = logging.getLogger(__name__)
 
 # In-memory dictionary to store the latest state of all cars
 vehicles_state = {}
+controller_precedence_q = []
 
 
 async def mqtt_listener():
+	global controller_precedence_q
+
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
 		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}')
-		print("Viewer subscribed to telemetry...")
+		await client.subscribe(config.TOPIC_CONTROLLER_STATUS)
+		print("Viewer subscribed to telemetry and controller status...")
+
 		async for message in client.messages:
-			payload						= json.loads(message.payload)
+			payload = json.loads(message.payload)
+
+			if str(message.topic) == config.TOPIC_CONTROLLER_STATUS:
+				controller_precedence_q = payload.get("precedence_queue", [])
+				continue
+
 			vehicle						= Vehicle(**payload)
 			vehicles_state[vehicle.id]	= vehicle
 
@@ -77,7 +87,10 @@ async def control_sim(cmd: SystemCommand):
 
 @app.get("/api/state")
 async def get_state():
-	return vehicles_state
+	return {
+        "vehicles"			: vehicles_state,
+        "precedence_queue"	: controller_precedence_q,
+    }
 
 
 @app.get("/")
