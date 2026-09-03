@@ -1,6 +1,6 @@
 import math
 
-from common.const import ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS
+from common.const import ROAD_WIDTH, ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS
 
 
 
@@ -22,7 +22,7 @@ def get_point_on_road(
 	"""
 	angle = get_road_angle(road_index, n_roads)
 	# total distance from the absolute center (0,0)
-	total_dist = ROUNDABOUT_RADIUS + distance_from_boundary
+	total_dist = ROUNDABOUT_RADIUS + ROAD_WIDTH + distance_from_boundary
 
 	# center of the road
 	cx = ROUNDABOUT_POS.x + total_dist * math.cos(angle)

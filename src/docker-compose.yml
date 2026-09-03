@@ -20,7 +20,7 @@ services:
     depends_on:
       - broker
     env_file:
-      - .env
+      - bash-scripts/clean.env.generated
     ports:
       - "${PORT_LOCAL_CONTROLLER}:${PORT_CONTROLLER}"
     networks:
@@ -33,9 +33,9 @@ services:
     depends_on:
       - broker
     env_file:
-    - bash-scripts/clean.env.generated
+      - bash-scripts/clean.env.generated
     deploy:
-      replicas: 40 #10
+      replicas: 30 #10
     networks:
       - broker-network
 
@@ -47,7 +47,7 @@ services:
     depends_on:
       - broker
     env_file:
-      - .env
+      - bash-scripts/clean.env.generated
     ports:
       - "${PORT_LOCAL_WEBVIEWER}:${PORT_WEBVIEWER}"
     networks:

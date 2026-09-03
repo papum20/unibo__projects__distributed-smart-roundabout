@@ -6,9 +6,9 @@ from time import time
 import aiomqtt
 
 from common import math_utils, physics, roundabout
-from common.const import ROUNDABOUT_N_ROADS, UPDATES_P_S_CONTROLLER, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, CAR_LENGTH
+from common.const import AREA_RADIUS, ROUNDABOUT_N_ROADS, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_PROXIMITY_DIST, ROUNDABOUT_RADIUS, CAR_LENGTH
 from common.get_env import config
-from common.models.models import Command, Vehicle, VehicleNavState
+from common.models.models import Command, Vehicle, VehicleCollision, VehicleNavState, VehiclePosition, VehicleState
 
 
 
@@ -19,16 +19,18 @@ active_vehicles			: dict[str, Vehicle]	= {}
 active_vehicles_times	: dict[str, float]		= {}
 active_vehicles_done	: dict[str, bool]		= {}
 
+# v_id -> (VehiclePosition, timestamp)
+vehicles_pos			: dict[str, tuple[VehiclePosition, float]] = {}
+
 # Vehicle ids, in order of arrival to the roundabout.
 # Keep them inside until they exit, because they may still have to yield to others.
 precedence_queue	: list[str] = []
 
 UPDATES_BEFORE_EXPIRY		= 3
-ROUNDABOUT_RPOXIMITY_DIST	= 2 * CAR_LENGTH
 
 
 
-def require_precedence(v1: Vehicle, v2: Vehicle) -> bool:
+def should_yield_to(v1: Vehicle, v2: Vehicle) -> bool:
 	"""
 	Determine if v1 should yield to v2, based on the precedence queue
 	and on giving priority to the right.
@@ -43,20 +45,11 @@ def require_precedence(v1: Vehicle, v2: Vehicle) -> bool:
 			return True
 	return False
 
-def safety_distance(v: Vehicle, margin: float) -> float:
-	"""
-	Calculate a dynamic safety distance based on the vehicle's speed.
-	@param margin: additional safety margin (e.g. half a car length, if calculating it from the car on front)
-	"""
-	# dynamic safety distance based on speed (1s reaction time)
-	safe_dist = (v.speed * 1.0) + CAR_LENGTH / 2.0 + margin
-	return max(safe_dist, 2 * CAR_LENGTH)
 
 
-
-def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> dict[str, Command]:
+def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> dict[str, Command]:
 	"""
-	Take a list of all current vehicles.
+	@param vehicles: a list of all current vehicles.
 	@return a dictionary mapping vehicle_id -> Command.
 	"""
 	# Default: tell everyone to maintain speed.
@@ -72,7 +65,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				pass
 		if v1.nav_state == VehicleNavState.APPROACHING and v1.id not in precedence_queue:
 			dist_to_roundabout = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH
-			if dist_to_roundabout <= ROUNDABOUT_RPOXIMITY_DIST:
+			if dist_to_roundabout <= ROUNDABOUT_PROXIMITY_DIST:
 				precedence_queue.append(v1.id)
 		
 		
@@ -87,7 +80,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 					dist_v2 = math_utils.get_dist(v2.pos, ROUNDABOUT_POS)
 					
 					# v1 too close behind v2
-					if dist_v1 > dist_v2 and (dist_v1 - dist_v2) < safety_distance(v1, margin=CAR_LENGTH/2.0):
+					if dist_v1 > dist_v2 and (dist_v1 - dist_v2) < physics.get_safety_distance(v1, margin=CAR_LENGTH/2.0):
 						commands[v1.id].target_acceleration = -v1.params.max_brake
 
 
@@ -97,14 +90,14 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				arc_dist	= angle_diff * ROUNDABOUT_RADIUS
 				
 				# v1 too close behind v2
-				if 0 < arc_dist < safety_distance(v1, margin=CAR_LENGTH/2.0):
+				if 0 < arc_dist < physics.get_safety_distance(v1, margin=CAR_LENGTH/2.0):
 					commands[v1.id].target_acceleration = -v1.params.max_brake
 
 
 			# inside-approaching conflict: slow down to yield
 			elif v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2.nav_state == VehicleNavState.APPROACHING:
-				if require_precedence(v1, v2):
-					# slow down until v2 is able to enter, each maintaining its speed
+				
+				if should_yield_to(v1, v2) or v2.state == VehicleState.FAILSAFE:
 					conflict_angle		= roundabout.get_road_angle(v2.entry_road)
 					v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
 					v1_exit_angle		= roundabout.get_road_angle(v1.exit_road)
@@ -113,7 +106,13 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 					# check if v1 exits earlier
 					if v1_dist_to_exit <= v1_dist_to_conflict:
 						continue
+					if v2.state == VehicleState.FAILSAFE:
+						# v2 is out of control, so yield.
+						# However, we consider its exit data reliable.
+						commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, -2.0)
+						continue
 
+					# slow down until v2 is able to enter, each maintaining its speed.
 					# time to arrival (TTA)
 					v1_tta				= physics.vehicle_tta(
 						v1, v1_dist_to_conflict,
@@ -128,7 +127,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 
 					if abs(v1_tta_acc - v2_tta) < conflict_time_margin_s or commands[v1.id].target_acceleration <= 0.0:
 						if abs(v1_tta - v2_tta) > conflict_time_margin_s and commands[v1.id].target_acceleration >= 0.0:
-							commands[v1.id].target_acceleration = 0.0
+							commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, 0.0)
 						else:
 							# a light brake is often enough
 							commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, -2.0)
@@ -144,10 +143,15 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				# check if v2 exits earlier
 				if v2_dist_to_exit <= v2_dist_to_conflict:
 					continue
+				if v2.state == VehicleState.FAILSAFE:
+					# v2 is out of control, so yield.
+					# However, we consider its exit data reliable.
+					commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, -2.0)
+					continue
 
 				# if v2 has to yield, v1 can just accelerate
 				# pylint: disable-next=arguments-out-of-order
-				if require_precedence(v2, v1):
+				if should_yield_to(v2, v1):
 					continue
 				
 				# time to arrival (TTA)
@@ -167,7 +171,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 				# If possible, prefer the fastest option.
 				if abs(v1_tta_acc - v2_tta) < conflict_time_margin_s or commands[v1.id].target_acceleration <= 0.0:
 					if abs(v1_tta - v2_tta) > conflict_time_margin_s and commands[v1.id].target_acceleration >= 0.0:
-						commands[v1.id].target_acceleration = 0.0
+						commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, 0.0)
 					else:
 						# a light brake is often enough
 						commands[v1.id].target_acceleration = min(commands[v1.id].target_acceleration, -2.0)
@@ -176,7 +180,7 @@ def evaluate_traffic(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.
 
 
 
-async def listen_telemetry(client: aiomqtt.Client):
+async def loop_listen_telemetry(client: aiomqtt.Client):
 	"""
 	Listen for cars reporting their positions.
 	"""
@@ -196,7 +200,25 @@ async def listen_telemetry(client: aiomqtt.Client):
 			logger.error("Failed to parse telemetry: %s", e)
 
 
-async def publish_state(client: aiomqtt.Client):
+async def loop_listen_positions(client: aiomqtt.Client):
+	"""
+	Listen for cars reporting their positions.
+	"""
+	topic_pattern = f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_POSITION_SUFFIX}"
+	await client.subscribe(topic_pattern)
+	logger.info("Controller listening for positions.")
+	
+	async for message in client.messages:
+		logger.debug("Received on topic %s: %s", message.topic, message.payload)
+		try:
+			payload 				= json.loads(message.payload)
+			v_pos					= VehiclePosition(**payload)
+			vehicles_pos[v_pos.id]	= (v_pos, time())
+		except Exception as e:
+			logger.error("Failed to parse position: %s", e)
+
+
+async def loop_publish_state(client: aiomqtt.Client):
 	"""
 	Publish the current state of the controller, including the precedence queue.
 	"""
@@ -209,14 +231,60 @@ async def publish_state(client: aiomqtt.Client):
 		await asyncio.sleep(1.0 / UPDATES_P_S_CONTROLLER)
 
 
-async def control_loop(client: aiomqtt.Client):
+async def loop_publish_collisions(client: aiomqtt.Client):
+	"""
+	Publish detected collisions between vehicles.
+	"""
+	collisions_topic = f"{config.TOPIC_VEHICLE_PREFIX}/{config.TOPIC_VEHICLE_COLLISIONS_SUFFIX}"
+	while True:
+		current_time = time()
+		collisions = []
+
+		for v1_id, (v1_pos, t1) in vehicles_pos.items():
+			if current_time - t1 > TIMER_NETWORK_TIMEOUT:
+				continue
+			v1_dist_to_center = math_utils.get_dist(v1_pos.pos, ROUNDABOUT_POS)
+			if v1_dist_to_center > AREA_RADIUS / 2:
+				# Only check for collisions if the vehicle is close enough to the roundabout.
+				# Otherwise, there would be collisions for spawns.
+				continue
+			
+			for v2_id, (v2_pos, t2) in vehicles_pos.items():
+				if current_time - t2 > TIMER_NETWORK_TIMEOUT:
+					continue
+				if t2 < t1:
+					# only check a pair once
+					continue
+				if v1_id == v2_id:
+					continue
+				v2_dist_to_center = math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS)
+				if v2_dist_to_center > AREA_RADIUS / 2:
+					continue
+
+				if physics.vehicle_collide(v1_pos, v2_pos):
+					collisions.append(VehicleCollision(
+						v1_id=v1_id,
+						v2_id=v2_id,
+						timestamp=current_time
+					).model_dump())
+		
+		if collisions:
+			for collision in collisions:
+				await client.publish(collisions_topic, payload=json.dumps(collision))
+				logger.warning("Published collision: %s", collision)
+		
+		await asyncio.sleep(1.0 / UPDATES_P_S_CONTROLLER)
+
+
+async def loop_control(client: aiomqtt.Client):
 	"""
 	Continuously evaluate traffic and publish commands.
 	"""
 	logger.info("Controller Orchestration Loop started.")
 	while True:
-		vehicles_list	= list(active_vehicles.values())
-		commands		= evaluate_traffic(vehicles_list)
+		# can't receive messages from disconnected vehicles (they're only sent for debugging)
+		vehicles_list	= [v for v in active_vehicles.values() if v.state != VehicleState.DISCONNECTED]
+		commands		= evaluate(vehicles_list)
 		current_time	= time()
 		
 		for v_n, (vid, cmd) in enumerate(commands.items(), start=1):
@@ -225,7 +293,7 @@ async def control_loop(client: aiomqtt.Client):
 				continue
 
 			if cmd.target_acceleration < 0.0:
-				logger.info("Vehicle #%d [%s]: brake (ACC: %s)", v_n, vid[:4], cmd.target_acceleration)
+				logger.debug("Vehicle #%d [%s]: brake (ACC: %s)", v_n, vid[:4], cmd.target_acceleration)
 			else:
 				logger.debug("Vehicle #%d [%s]: maintaining speed (ACC: %s)", v_n, vid[:4], cmd.target_acceleration)
 				
@@ -238,9 +306,11 @@ async def control_loop(client: aiomqtt.Client):
 async def main():
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
 		await asyncio.gather(
-			listen_telemetry(client),
-			publish_state(client),
-			control_loop(client)
+			loop_listen_telemetry(client),
+			loop_listen_positions(client),
+			loop_publish_collisions(client),
+			loop_publish_state(client),
+			loop_control(client)
 		)
 
 

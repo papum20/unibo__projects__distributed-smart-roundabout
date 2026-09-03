@@ -12,9 +12,11 @@
 			padding: 20px;
 		}
 		#dashboard { 
-			width: 420px; /* slightly wider to fit single-line stats */
+			flex: 0 1 760px;
+			width: 760px; /* slightly wider to fit single-line stats */
 			height: calc(100vh - 40px); /* almost as tall as viewport */
 			max-height: none;
+			overflow-x: hidden;
 			overflow-y: auto; /* adds scrollbar if too many items */
 			margin-right: 20px; 
 			background: #222; 
@@ -22,6 +24,33 @@
 			border-radius: 8px; 
 			border: 1px solid #444; 
 			box-sizing: border-box;
+		}
+		#dashboard-content {
+			display: grid;
+			grid-template-columns: minmax(400px, 2fr) minmax(220px, 1fr);
+			gap: 20px;
+		}
+		.dashboard-column {
+			min-width: 0;
+		}
+		@media (max-width: 1100px) {
+			body {
+				flex-direction: column;
+			}
+			#dashboard {
+				width: 100%;
+				min-width: 0;
+				max-width: none;
+				margin-right: 0;
+				margin-bottom: 20px;
+			}
+			#dashboard-content {
+				grid-template-columns: 1fr 1fr;
+			}
+			canvas {
+				max-width: 100%;
+				height: auto;
+			}
 		}
 		canvas { 
 			width: 900px;
@@ -38,21 +67,33 @@
 			font-family: monospace; 
 			border-bottom: 1px solid #333; 
 			padding-bottom: 5px;
+			white-space: nowrap;
 		}
 		.status-NORMAL { color: #00ff00; }
-		.status-FAILSAFE { color: #ff3333; }
+		.status-FAILSAFE { color: #ff9900; }
+		.status-DISCONNECTED { color: #ff3333; }
 	</style>
 </head>
 <body>
-	<h1>Smart Roundabout Orchestrator</h1>
-
 	<div id="dashboard">
-		<h2>Live Telemetry</h2>
-		<hr style="border-color: #444;">
-		<div id="telemetry-list"></div>
+		<div id="vehicle-count" class="hud-line"></div>
 
-		<h3>Precedence Queue</h3>
-    	<div id="precedence-queue"></div>
+		<div id="dashboard-content">
+			<div class="dashboard-column">
+				<h2>Live Telemetry</h2>
+				<hr style="border-color: #444;">
+				<div id="telemetry-list"></div>
+
+				<h3>Precedence Queue</h3>
+				<div id="precedence-queue"></div>
+			</div>
+
+			<div class="dashboard-column">
+				<h2>Collisions</h2>
+				<hr style="border-color: #444;">
+				<div id="collision-list"></div>
+			</div>
+		</div>
 	</div>
 
 	<canvas id="simCanvas" width="900" height="900"></canvas>
@@ -101,12 +142,42 @@
 				const response			= await fetch('/api/state');
 				const state				= await response.json();
 				const vehicles			= state.vehicles;
+				const totVSpawned		= state.tot_vehicles_spawned;
+				const collisions		= state.collisions ?? [];
 				const precedenceQueue	= state.precedence_queue;
 
 				const vehicleIds	= Object.keys(vehicles).sort();
 				const vehicleOrder	= new Map(
 					vehicleIds.map((id, index) => [id, index])
 				);
+
+
+				document.getElementById("vehicle-count").textContent =
+   					`Total spawned: ${totVSpawned}`;
+
+				const collisionHtml = collisions.length === 0
+					? "<div class=\"hud-line\">None</div>"
+					: [...collisions].reverse().map(collision => {
+						const time = new Date(collision.timestamp * 1000)
+							.toLocaleTimeString("en-GB", {
+								hour12: false,
+								hour: "2-digit",
+								minute: "2-digit",
+								second: "2-digit"
+							});
+
+						const id1 = collision.v1_id.substring(0, 4);
+						const id2 = collision.v2_id.substring(0, 4);
+
+						return `
+							<div class="hud-line">
+								{${time} ${id1}-${id2}}
+							</div>
+						`;
+					}).join("");
+
+				document.getElementById("collision-list").innerHTML = collisionHtml;
+					
 
 				// clear the screen
 				ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -187,9 +258,7 @@
 					
 					// rectangle body
 					const lightness = v.color_lightness_perc ?? 50;
-					const vColor = (v.state === "FAILSAFE")
-						? `hsl(0, 100%, ${lightness}%)`
-						: `hsl(${v.color_hue}, 100%, ${lightness}%)`;
+					const vColor = `hsl(${v.color_hue}, 100%, ${lightness}%)`;
 					ctx.fillStyle = vColor;
 					ctx.fillRect(-vLen/2, -vWid/2, vLen, vWid);
 
@@ -200,8 +269,9 @@
 					ctx.restore();
 
 					// car ID text
+					const vStateSym	= v.state === "FAILSAFE" ? "!" : v.state === "DISCONNECTED" ? "?" : "";
 					const vAccSign	= v.acceleration > 0 ? "+" : v.acceleration < 0 ? "-" : "=";
-					const vLabel 	= `${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${vAccSign}`;
+					const vLabel 	= `${vStateSym}${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${vAccSign}`;
 
 					ctx.font		= "11px monospace";
 					const labelW	= ctx.measureText(vLabel).width + 8;
@@ -277,7 +347,10 @@
 					if (v.nav_state === "EXITING") navStr = "EXI";
 					
 					let stateClass = `status-${v.state}`;
-					let stateShort = v.state === "NORMAL" ? "NORM" : "FAIL";
+					let stateShort =
+						v.state === "NORMAL" ? "NORM"
+						: v.state === "DISCONNECTED" ? "DISC"
+						: "FAIL";
 
 					const speedColor = v.speed == 0
 						? "#ff3333"
