@@ -26,6 +26,18 @@ services:
     networks:
       - broker-network
 
+  simulation:
+    build:
+      context: .
+      dockerfile: service-simulation/Dockerfile
+    container_name: roundabout-simulation
+    depends_on:
+      - broker
+    env_file:
+      - bash-scripts/clean.env.generated
+    networks:
+      - broker-network
+
   vehicle:
     build:
       context: .

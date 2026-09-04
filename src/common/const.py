@@ -5,7 +5,7 @@ from common.models.models import Position
 UPDATES_P_S_VEHICLE		= 10.0
 UPDATES_P_S_CONTROLLER	= 10.0
 
-TIMER_NETWORK_TIMEOUT	= 1.0
+TIMER_NETWORK_TIMEOUT	= 0.5	# s
 
 # visualization area
 AREA_RADIUS	= 150.0
@@ -25,6 +25,8 @@ VEHICLE_DIST_TOL		= 0.5
 VEHICLE_SPEED_TOL_PERC	= 0.1
 CAR_LENGTH				= 4.5
 CAR_WIDTH				= 2.0
+CAR_VISION_RADIUS_M		= 30.0
+VEHICLE_SAFETY_MARGIN_M	= 5.0
 
 # threshold where controller/vehicles consider to be about to enter
 ROUNDABOUT_PROXIMITY_DIST	= 2 * CAR_LENGTH

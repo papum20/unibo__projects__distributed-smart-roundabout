@@ -1,44 +1,15 @@
 import math
 
-from common.const import CAR_LENGTH, CAR_WIDTH
-from common.models.models import VEHICLE_DFLT_ACC_BRAKE_M_S2, Position, Vehicle, VehicleNavState, VehiclePosition
+from common import roundabout
+from common import math_utils
+from common.const import CAR_LENGTH, CAR_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
+from common.models.models import Position
+from common.models.vehicle import (
+	Vehicle, VehicleNavState, VehiclePosition
+)
 from common.math_utils import get_dist
 
 
-
-def get_safety_distance(v: Vehicle, margin: float) -> float:
-	"""
-	Calculate a dynamic safety distance based on the vehicle's speed.
-	@param margin: additional safety margin (e.g. half a car length, if calculating it from the car on front)
-	"""
-	# dynamic safety distance based on speed (1s reaction time)
-	safe_dist = (v.speed * 1.0) + CAR_LENGTH / 2.0 + margin
-	return max(safe_dist, 2 * CAR_LENGTH)
-
-def get_stop_distance(v: VehiclePosition, max_brake: float = VEHICLE_DFLT_ACC_BRAKE_M_S2) -> float:
-	"""
-	Calculate the distance required to stop the vehicle, based on its current speed and max braking.
-	@return: distance in meters
-	"""
-	if v.speed <= 0.0:
-		return 0.0
-	return (v.speed ** 2) / (2 * max_brake)
-
-def get_stop_distance_vehicle(v: Vehicle) -> float:
-	"""
-	Calculate the distance required to stop the vehicle, based on its current speed and max braking.
-	@return: distance in meters
-	"""
-	return get_stop_distance(
-		VehiclePosition(
-			id			= v.id,
-			pos			= v.pos,
-			pos_angle	= v.pos_angle,
-			speed		= v.speed,
-			nav_state	= v.nav_state
-		),
-		max_brake = v.params.max_brake
-	)
 
 def _vehicle_heading(v: VehiclePosition) -> float:
 	"""Return the direction in which the vehicle is pointing."""
@@ -166,15 +137,18 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 	if dist <= 0.0:
 		return 0.0
 
-	d = max(0.0, dist - margin)
-
-	if new_acc is not None:
-		acc = max(float(new_acc), 1e-6)
-	else:
-		acc = max(float(v.acceleration), 1e-6)
-
+	d		= max(0.0, dist - margin)
 	v0		= max(float(v.speed), 0.0)
 	vmax	= v.params.max_speed
+
+	if new_acc is not None:
+		acc = float(new_acc)
+	else:
+		acc = float(v.acceleration)
+	if abs(acc) < 1e-9:
+		if v0 == 0.0:
+			return math.inf
+		return d / v0
 
 	# distance to accelerate from v0 to vmax
 	d_acc = (vmax ** 2 - v0 ** 2) / (2.0 * acc)
@@ -185,6 +159,88 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 	t_acc		= 		(vmax - v0)	/ acc
 	t_cruise	= max(	(d - d_acc)	/ vmax, 0.0)
 	return t_acc + t_cruise
+
+
+
+def vehicle_can_enter_safely(
+	v1			: Vehicle,
+	v2			: Vehicle,
+	v1_acc		: float|None	= None,
+	v2_acc		: float|None	= None,
+	safety_dist	: float			= VEHICLE_SAFETY_MARGIN_M
+) -> bool:
+	"""
+	If v1 is about to enter the roundabout and v2 is already inside,
+	determine if v1 can enter safely without crashing into v2 (either immediately or later,
+	because v2 may reach v1 later).  
+	`s2 = v t / R + 0.5 a t**2 / R`  
+	`S1 = V t / R + 0.5 A t**2 / R`  
+
+	`v t / R + 0.5 a t**2 / R + d = V t / R + 0.5 A t**2 / R`  
+	`(0.5 * (a - A)) * t**2 + (v - V) * t - d = 0`  
+	`t = (- (v - V) + sqrt((v - V)**2 + 2 * (a - A) * d)) / (a - A)`  
+	@param v1_acc : optional new acceleration for v1, otherwise use its current one.
+	`v1_acc == v2_acc` is illegal, so return False 
+	@return : True if v1 can enter safely
+	"""
+	if v1.nav_state != VehicleNavState.APPROACHING or v2.nav_state != VehicleNavState.IN_ROUNDABOUT:
+		return True
+	if v1.speed >= v2.speed:
+		return True
+	
+	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
+
+	v1_acc	= v1_acc if v1_acc is not None else v1.acceleration
+	v2_acc	= v2_acc if v2_acc is not None else v2.acceleration
+	d		= v2_dist_to_conflict - safety_dist
+	if v1_acc == v2_acc:
+		return False
+
+	# solve quadratic equation for time t
+	a				= 0.5 * (v2_acc - v1_acc)
+	b				= v2.speed - v1.speed
+	discriminant	= b ** 2 + 4 * a * d
+	if discriminant < 0:
+		# no solution, v1 will never catch up to v2
+		return True
+	
+	t1 = (-b + math.sqrt(discriminant)) / (2 * a)
+	t2 = (-b - math.sqrt(discriminant)) / (2 * a)
+	return t1 < 0 and t2 < 0
+
+
+def vehicle_enters_later(
+	v1			: Vehicle,
+	v2			: Vehicle,
+	v1_acc		: float|None	= None,
+	v2_acc		: float|None	= None,
+	margin		: float			= VEHICLE_SAFETY_MARGIN_M
+) -> bool:
+	"""
+	If v1 is approaching and v2 is already in the the roundabout,
+	determine if v2 will pass before v1 enters.  
+	@param v1_acc : optional new acceleration for v1, otherwise use its current one.
+	@return : True if v1 enters later.
+	"""
+	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+	v1_dist_to_conflict	= math_utils.get_dist(v2.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
+		
+	# time to arrival (TTA), considering the straight road part for v1
+	v1_tta	= vehicle_tta(
+		v1, v1_dist_to_conflict,
+		new_acc=v1_acc, margin=CAR_LENGTH
+	)
+	v2_tta	= vehicle_tta(
+		v2, v2_dist_to_conflict,
+		new_acc=v2_acc, margin=CAR_LENGTH + margin
+	)
+
+	if v2_tta < v1_tta:
+		# v2 will pass before v1 arrives
+		return True
+	return False
 
 
 

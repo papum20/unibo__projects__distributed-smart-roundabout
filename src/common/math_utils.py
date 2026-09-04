@@ -19,7 +19,7 @@ def get_dist(pos1: Position, pos2: Position) -> float:
 def get_dist_on_circle(angle1: float, angle2: float, radius: float = ROUNDABOUT_RADIUS) -> float:
 	"""
 	Note that the angle is calculated counter-clockwise, so the result is always the positive distance
-	from angle1 to angle2 (in modulo).
+	from angle1 to angle2 (in modulo).  
 	@param angle1: angle of the first point, in radians
 	@param angle2: angle of the second point, in radians
 	@param radius: radius of the circle, in meters
