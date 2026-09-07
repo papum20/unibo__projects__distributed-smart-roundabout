@@ -131,13 +131,13 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 	@param v: vehicle, with current speed, acceleration, max_speed
 	@param dist: remaining distance
 	@param new_acc: optional new acceleration to use instead of the current one
-	@param margin: optional margin, to subtract from the distance (e.g., vehicle length)
+	@param margin: optional margin, to add to the distance (e.g., vehicle length)
 	@return: time in seconds
 	"""
 	if dist <= 0.0:
 		return 0.0
 
-	d		= max(0.0, dist - margin)
+	d		= max(0.0, dist + margin)
 	v0		= max(float(v.speed), 0.0)
 	vmax	= v.params.max_speed
 
@@ -185,8 +185,6 @@ def vehicle_can_enter_safely(
 	"""
 	if v1.nav_state != VehicleNavState.APPROACHING or v2.nav_state != VehicleNavState.IN_ROUNDABOUT:
 		return True
-	if v1.speed >= v2.speed:
-		return True
 	
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
@@ -224,23 +222,20 @@ def vehicle_enters_later(
 	@return : True if v1 enters later.
 	"""
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-	v1_dist_to_conflict	= math_utils.get_dist(v2.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+	v1_dist_to_conflict	= math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
 		
 	# time to arrival (TTA), considering the straight road part for v1
 	v1_tta	= vehicle_tta(
 		v1, v1_dist_to_conflict,
-		new_acc=v1_acc, margin=CAR_LENGTH
+		new_acc=v1_acc, margin=0
 	)
 	v2_tta	= vehicle_tta(
 		v2, v2_dist_to_conflict,
 		new_acc=v2_acc, margin=CAR_LENGTH + margin
 	)
-
-	if v2_tta < v1_tta:
-		# v2 will pass before v1 arrives
-		return True
-	return False
+	# if v2 will pass before v1 arrives
+	return v2_tta < v1_tta
 
 
 

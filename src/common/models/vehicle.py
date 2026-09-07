@@ -1,10 +1,11 @@
 from enum import Enum
+import math
 
 from pydantic import BaseModel
 
-from common.const import CAR_LENGTH
+from common import math_utils, roundabout
+from common.const import CAR_LENGTH, ROUNDABOUT_POS, VEHICLE_ANGLE_TOL_RAD, VEHICLE_REACTION_TIME_S
 from common.models.models import Position
-import math_utils
 
 
 
@@ -55,7 +56,7 @@ class VehiclePosition(BaseModel):
 		"""
 		if self.speed <= 0.0:
 			return 0.0
-		return (self.speed ** 2) / (2 * acc_brake)
+		return abs((self.speed ** 2) / (2 * acc_brake))
 
 
 
@@ -93,6 +94,13 @@ class Vehicle(BaseModel):
 		return self.params.max_brake * 0.5
 
 
+	def get_reaction_time_dist(self) -> float:
+		"""
+		Calculate the distance traveled during the vehicle's reaction time.
+		@return: distance in meters
+		"""
+		return self.speed * VEHICLE_REACTION_TIME_S
+
 	def get_safety_dist(self, margin: float) -> float:
 		"""
 		Calculate a dynamic safety distance based on the vehicle's speed.
@@ -111,6 +119,14 @@ class Vehicle(BaseModel):
 		acc_brake = acc_brake if acc_brake is not None else self.params.max_brake
 		return self.to_pos().get_stop_dist(acc_brake = acc_brake)
 
+
+	def _has_same_approach_road(self, v2: VehiclePosition) -> bool:
+		road_angle	= roundabout.get_road_angle(self.entry_road)
+		angle_diff	= (v2.pos_angle - road_angle) % (2 * math.pi)
+
+		return min(angle_diff, 2 * math.pi - angle_diff) < VEHICLE_ANGLE_TOL_RAD
+
+
 	def get_stop_behind_margin(
 			self, v2: VehiclePosition, v1_acc_brake: float|None = None, v2_acc_brake: float = VEHICLE_DFLT_ACC_BRAKE_MAX_M_S2
 	) -> float:
@@ -122,11 +138,17 @@ class Vehicle(BaseModel):
 		"""
 		v1_acc_brake	= v1_acc_brake if v1_acc_brake is not None else self.params.max_brake
 		if self.nav_state != v2.nav_state:
-			return True
+			return float("inf")
 		elif self.nav_state == VehicleNavState.IN_ROUNDABOUT:
-			dist_to_v2		= math_utils.get_dist_on_circle(self.pos_angle, v2.pos_angle) - CAR_LENGTH
+			dist_to_v2	= math_utils.get_dist_on_circle(self.pos_angle, v2.pos_angle) - CAR_LENGTH
 		else:
-			dist_to_v2		= math_utils.get_dist(self.pos, v2.pos) - CAR_LENGTH
+			if not self._has_same_approach_road(v2):
+				return float("inf")
+			v1_dist = math_utils.get_dist(self.pos, ROUNDABOUT_POS)
+			v2_dist = math_utils.get_dist(v2.pos, 	ROUNDABOUT_POS)
+			if v2_dist >= v1_dist:
+				return float("inf")
+			dist_to_v2	= math_utils.get_dist(self.pos, v2.pos) - CAR_LENGTH
 		v1_stop_dist	= self.get_stop_dist(	acc_brake = v1_acc_brake )
 		v2_stop_dist	= v2.get_stop_dist(		acc_brake = v2_acc_brake )
-		return v1_stop_dist + v2_stop_dist - dist_to_v2
+		return dist_to_v2 + v2_stop_dist - v1_stop_dist

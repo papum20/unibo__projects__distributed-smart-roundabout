@@ -142,6 +142,10 @@
 				const response			= await fetch('/api/state');
 				const state				= await response.json();
 				const vehicles			= state.vehicles;
+				const ghosts			= Object.fromEntries(
+					(state.ghosts ?? []).map(ghost => [ghost.id, ghost])
+				);
+				const mapVehicles		= { ...vehicles, ...ghosts };
 				const totVSpawned		= state.tot_vehicles_spawned;
 				const collisions		= state.collisions ?? [];
 				const precedenceQueue	= state.precedence_queue;
@@ -235,9 +239,10 @@
 				ctx.stroke();
 
 				// draw each car
-				for (let vehicle_id in vehicles) {
-					let v = vehicles[vehicle_id];
-					
+				for (let vehicle_id in mapVehicles) {
+					let v			= mapVehicles[vehicle_id];
+					const isGhost	= vehicle_id.startsWith("GHOST-");
+
 					// car.x and car.y are the logical coordinates.
 					// We add offsetX and offsetY to place them correctly on the screen's rectangle
 					let drawX	= (v.pos.x * sysConfig.scale) + offsetX;
@@ -257,9 +262,10 @@
 					ctx.rotate(drawAngle);
 					
 					// rectangle body
-					const lightness = v.color_lightness_perc ?? 50;
-					const vColor = `hsl(${v.color_hue}, 100%, ${lightness}%)`;
-					ctx.fillStyle = vColor;
+					const vColor = isGhost
+						? "#888"
+						: `hsl(${v.color_hue}, 100%, ${v.color_lightness_perc ?? 50}%)`;
+					ctx.fillStyle	= vColor;
 					ctx.fillRect(-vLen/2, -vWid/2, vLen, vWid);
 
 					// windshield (to show front direction clearly)
@@ -267,6 +273,10 @@
 					ctx.fillRect((vLen/2) - 4, -vWid/2 + 1, 3, vWid - 2);
 
 					ctx.restore();
+
+					if (isGhost) {
+						continue;
+					}
 
 					// car ID text
 					const vStateSym	= v.state === "FAILSAFE" ? "!" : v.state === "DISCONNECTED" ? "?" : "";

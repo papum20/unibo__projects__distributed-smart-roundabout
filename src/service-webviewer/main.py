@@ -16,7 +16,8 @@ from common.const import (
 	CAR_WIDTH
 )
 from common.get_env import config
-from common.models.models import Vehicle, SystemCommand, VehicleCollision
+from common.models.models import SystemCommand
+from common.models.vehicle import Vehicle, VehicleCollision
 
 
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 vehicles_state								= {}
 tot_vehicles_spawned						= 0
 vehicles_collisions: list[VehicleCollision] = []
+controller_ghosts_list						= []
 controller_precedence_q						= []
 
 
@@ -44,7 +46,8 @@ async def mqtt_listener():
 			payload = json.loads(message.payload)
 
 			if str(message.topic) == config.TOPIC_CONTROLLER_STATUS:
-				controller_precedence_q = payload.get("precedence_queue", [])
+				controller_precedence_q	= payload.get("precedence_queue", [])
+				controller_ghosts_list	= payload.get("ghosts", [])
 				continue
 
 			if str(message.topic) == f'{config.TOPIC_VEHICLE_PREFIX}/{config.TOPIC_VEHICLE_COLLISIONS_SUFFIX}':
@@ -129,6 +132,7 @@ async def get_state():
 	return {
 		"vehicles"				: vehicles_state,
 		"tot_vehicles_spawned"	: tot_vehicles_spawned,
+		"ghosts"				: controller_ghosts_list,
 		"precedence_queue"		: controller_precedence_q,
 		"collisions"			: vehicles_collisions,
 	}

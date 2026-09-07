@@ -86,8 +86,6 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 		new_acc = 0.0
 
 	for v2 in v_others:
-		safe_dist = v1.get_safety_dist(margin=CAR_LENGTH/2.0)
-
 		# entrance
 		if v1.nav_state == VehicleNavState.APPROACHING and v2.nav_state == VehicleNavState.IN_ROUNDABOUT:
 			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH

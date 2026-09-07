@@ -6,6 +6,8 @@ controller:
   * before roundabout, not inside
 * add safety distance to compensate for bad approximative vehicle collision detection
 * what if cant yield safely
+* check if hit v2 from behind after enetering
+* change vehicle_can_enter_safely equation, its flawed, and also if a=A
 
 test:
 * test error cases for dockers not responding
