@@ -111,6 +111,14 @@
 
 		let sysConfig = null;
 
+		const queueState = v => {
+			if (v.state === "NORMAL") return "NORM";
+			if (v.state === "FAILSAFE") return "FAIL";
+			if (v.state === "DISCONNECTED") return "DISC";
+			return "UNKN";
+		};
+		
+
 		async function fetchConfig() {
 			const response	= await fetch('/api/config');
 			sysConfig		= await response.json();
@@ -279,9 +287,12 @@
 					}
 
 					// car ID text
-					const vStateSym	= v.state === "FAILSAFE" ? "!" : v.state === "DISCONNECTED" ? "?" : "";
-					const vAccSign	= v.acceleration > 0 ? "+" : v.acceleration < 0 ? "-" : "=";
-					const vLabel 	= `${vStateSym}${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${vAccSign}`;
+					const vStateSym		= v.state === "FAILSAFE" ? "!" : v.state === "DISCONNECTED" ? "?" : "";
+					const vAccSign		= v.acceleration > 0 ? "+" : v.acceleration < 0 ? "-" : "=";
+					const isMaxBraking	= v.acceleration <= -v.params.max_brake;
+					const vLabel = `${vStateSym}${vehicle_id.substring(0, 4)}-${Math.round(v.speed)}${
+						isMaxBraking ? "--" : vAccSign
+					}`;
 
 					ctx.font		= "11px monospace";
 					const labelW	= ctx.measureText(vLabel).width + 8;
@@ -333,12 +344,19 @@
 
 				const queueHtml = precedenceQueue.length === 0
 					? "<div class=\"hud-line\">Empty</div>"
-					: precedenceQueue.map((vehicleId, index) => `
-						<div class="hud-line">
-							<strong>#${index + 1}</strong>
-							${vehicleId.substring(0, 4)}
-						</div>
-					`).join("");
+					: precedenceQueue.map((vehicleId, index) => {
+						const queuedVehicle = vehicles[vehicleId];
+						const state = queuedVehicle
+							? queueState(queuedVehicle)
+							: "UNKN";
+
+						return `
+							<div class="hud-line">
+								<strong>#${index + 1}</strong>
+								${vehicleId.substring(0, 4)}-${state}
+							</div>
+						`;
+					}).join("");
 
 				document.getElementById("precedence-queue").innerHTML = `
 						${queueHtml}

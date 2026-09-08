@@ -2,7 +2,7 @@ import math
 
 from common import roundabout
 from common import math_utils
-from common.const import CAR_LENGTH, CAR_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
+from common.const import CAR_LENGTH, CAR_WIDTH, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
 from common.models.models import Position
 from common.models.vehicle import (
 	Vehicle, VehicleNavState, VehiclePosition
@@ -76,6 +76,15 @@ def update_speed(speed: float, acc: float, dt: float, max_speed: float) -> float
 	new_speed = speed + (acc * dt)
 	return max(0.0, min(new_speed, max_speed))
 
+def vehicle_update_speed(v: Vehicle, dt: float, new_acc: float|None = None) -> float:
+	"""Update speed, preventing it from going below 0 (reversing) or above max_speed."""
+	return update_speed(v.speed, v.acceleration if new_acc is None else new_acc, dt, v.params.max_speed)
+
+
+
+#
+# MOVEMENT
+#
 
 def move_towards(current: Position, target: Position, speed: float, dt: float) -> Position:
 	"""Move straight towards a specific target point."""
@@ -122,6 +131,55 @@ def move_on_circle(center: Position, radius: float, current_angle: float, speed:
 	return new_angle, Position(x=new_x, y=new_y)
 
 
+def vehicle_move_dist_on_circle(
+	v: Vehicle, dist: float, radius: float=ROUNDABOUT_RADIUS
+) -> tuple[float, Position]:
+	
+	if dist <= 0.0:
+		return v.pos_angle, v.pos
+
+	new_angle = (v.pos_angle + dist / radius) % (2 * math.pi)
+	new_pos = Position(
+		x=ROUNDABOUT_POS.x + radius * math.cos(new_angle),
+		y=ROUNDABOUT_POS.y + radius * math.sin(new_angle),
+	)
+
+	return new_angle, new_pos
+
+
+def vehicle_ride(
+	v: Vehicle, dt: float, new_acc: float|None = None
+) -> float:
+	"""
+	@param new_acc : optional new acceleration to use instead of v's current one
+	@return : the distance traveled
+	"""
+	if dt <= 0.0:
+		return 0.0
+
+	acc			= float(v.acceleration if new_acc is None else new_acc)
+	speed		= max(float(v.speed), 0.0)
+	max_speed	= max(float(v.params.max_speed), 0.0)
+
+	if acc > 0.0 and speed < max_speed:
+		time_to_max = (max_speed - speed) / acc
+
+		if dt <= time_to_max:
+			return speed * dt + 0.5 * acc * dt ** 2
+		else:
+			dist_to_max =	speed * time_to_max + 0.5 * acc * time_to_max ** 2
+			return			dist_to_max + max_speed * (dt - time_to_max)
+	elif acc < 0.0:
+		t_to_stop = speed / -acc
+
+		if dt <= t_to_stop:
+			return speed * dt + 0.5 * acc * dt ** 2
+		else:
+			return speed * t_to_stop + 0.5 * acc * t_to_stop ** 2
+	else:
+		return speed * dt
+
+
 
 def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0) -> float:
 	"""
@@ -141,10 +199,7 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 	v0		= max(float(v.speed), 0.0)
 	vmax	= v.params.max_speed
 
-	if new_acc is not None:
-		acc = float(new_acc)
-	else:
-		acc = float(v.acceleration)
+	acc = float(v.acceleration if new_acc is None else new_acc)
 	if abs(acc) < 1e-9:
 		if v0 == 0.0:
 			return math.inf
@@ -162,50 +217,80 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 
 
 
-def vehicle_can_enter_safely(
+#
+# COLLISIONS
+#
+
+def _vehicle_predict_conflict(
+	v_app		: Vehicle,
+	v_in		: Vehicle,
+	v_app_acc	: float|None	= None,
+	v_in_acc	: float|None	= None
+) -> tuple[Vehicle, Vehicle]|None:
+	"""
+	@param dt : time for v_app to reach the roundabout entry
+	@return : the predicted positions of v_app approaching and v_in in roundabout, after dt seconds;
+	None in case of error
+	"""
+	if v_app.nav_state != VehicleNavState.APPROACHING or v_in.nav_state != VehicleNavState.IN_ROUNDABOUT:
+		return None
+
+	# tta to the exact point, for following calculations
+	v1_tta	= vehicle_tta(
+		v_app, math_utils.get_dist(v_app.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS,
+		new_acc=v_app_acc, margin=0 )
+	
+	conflict_angle	= roundabout.get_road_angle(v_app.entry_road)
+	# v1 has just reached the roundabout entry
+	new_v1				= v_app.model_copy(deep=True)
+	new_v1.nav_state	= VehicleNavState.IN_ROUNDABOUT
+	new_v1.pos_angle	= conflict_angle
+	new_v1.pos			= roundabout.get_entry(v_app.entry_road)
+	new_v1.speed		= vehicle_update_speed(v_app, v1_tta, new_acc=v_app_acc)
+	new_v1.acceleration = v_app.acceleration if v_app_acc is None else v_app_acc
+
+	# advance v2 for the same amount of time
+	new_v2				= v_in.model_copy(deep=True)
+	v2_distance			= vehicle_ride(v_in, v1_tta, new_acc=v_in_acc)
+	new_v2.pos_angle	= (v_in.pos_angle + v2_distance / ROUNDABOUT_RADIUS) % (2 * math.pi)
+	new_v2.pos			= math_utils.get_point_on_circle(new_v2.pos_angle)
+	new_v2.speed		= vehicle_update_speed(v_in, v1_tta, new_acc=v_in_acc)
+	new_v2.acceleration	= v_in.acceleration if v_in_acc is None else v_in_acc
+
+	return (new_v1, new_v2)
+
+
+def vehicle_enters_first(
 	v1			: Vehicle,
 	v2			: Vehicle,
 	v1_acc		: float|None	= None,
 	v2_acc		: float|None	= None,
 	safety_dist	: float			= VEHICLE_SAFETY_MARGIN_M
-) -> bool:
+) -> tuple[Vehicle, Vehicle] | None:
 	"""
-	If v1 is about to enter the roundabout and v2 is already inside,
-	determine if v1 can enter safely without crashing into v2 (either immediately or later,
-	because v2 may reach v1 later).  
-	`s2 = v t / R + 0.5 a t**2 / R`  
-	`S1 = V t / R + 0.5 A t**2 / R`  
+	If v1 is approachingthe roundabout and v2 is already inside,
+	determine if v1 enters before v2 has passed, and predict their future positions.  
 
-	`v t / R + 0.5 a t**2 / R + d = V t / R + 0.5 A t**2 / R`  
-	`(0.5 * (a - A)) * t**2 + (v - V) * t - d = 0`  
-	`t = (- (v - V) + sqrt((v - V)**2 + 2 * (a - A) * d)) / (a - A)`  
 	@param v1_acc : optional new acceleration for v1, otherwise use its current one.
-	`v1_acc == v2_acc` is illegal, so return False 
-	@return : True if v1 can enter safely
+	@return :
+		(v1_predicted, v2_predicted) if v1 enters first.
+		None otherwise.
 	"""
 	if v1.nav_state != VehicleNavState.APPROACHING or v2.nav_state != VehicleNavState.IN_ROUNDABOUT:
-		return True
+		return None
 	
+	# times to get to conflict point are more conservative:
+	# they also take into account some margins, e.g. for the car size
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+	v1_dist_to_conflict	= max(0.0, math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS)
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
+	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=0)
+	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=-CAR_LENGTH - safety_dist)
 
-	v1_acc	= v1_acc if v1_acc is not None else v1.acceleration
-	v2_acc	= v2_acc if v2_acc is not None else v2.acceleration
-	d		= v2_dist_to_conflict - safety_dist
-	if v1_acc == v2_acc:
-		return False
-
-	# solve quadratic equation for time t
-	a				= 0.5 * (v2_acc - v1_acc)
-	b				= v2.speed - v1.speed
-	discriminant	= b ** 2 + 4 * a * d
-	if discriminant < 0:
-		# no solution, v1 will never catch up to v2
-		return True
+	if not math.isfinite(v1_tta_conflict) or not math.isfinite(v2_tta_conflict) or v1_tta_conflict > v2_tta_conflict:
+		return None
 	
-	t1 = (-b + math.sqrt(discriminant)) / (2 * a)
-	t2 = (-b - math.sqrt(discriminant)) / (2 * a)
-	return t1 < 0 and t2 < 0
+	return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
 
 
 def vehicle_enters_later(
@@ -213,29 +298,32 @@ def vehicle_enters_later(
 	v2			: Vehicle,
 	v1_acc		: float|None	= None,
 	v2_acc		: float|None	= None,
-	margin		: float			= VEHICLE_SAFETY_MARGIN_M
-) -> bool:
+	safety_dist	: float			= VEHICLE_SAFETY_MARGIN_M
+) -> tuple[Vehicle, Vehicle]|None:
 	"""
 	If v1 is approaching and v2 is already in the the roundabout,
-	determine if v2 will pass before v1 enters.  
+	determine if v2 will pass before v1 enters, and predict their future positions.
+
 	@param v1_acc : optional new acceleration for v1, otherwise use its current one.
-	@return : True if v1 enters later.
+	@return :
+		(v1_predicted, v2_predicted) if v1 arrives later than v2.
+		None if v1 does not arrive later.
 	"""
+	if v1.nav_state != VehicleNavState.APPROACHING or v2.nav_state != VehicleNavState.IN_ROUNDABOUT:
+		return None
+
+	# times to get to conflict point are more conservative:
+	# they also take into account some margins, e.g. for the car size
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-	v1_dist_to_conflict	= math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+	v1_dist_to_conflict	= max(0.0, math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS)
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
-		
-	# time to arrival (TTA), considering the straight road part for v1
-	v1_tta	= vehicle_tta(
-		v1, v1_dist_to_conflict,
-		new_acc=v1_acc, margin=0
-	)
-	v2_tta	= vehicle_tta(
-		v2, v2_dist_to_conflict,
-		new_acc=v2_acc, margin=CAR_LENGTH + margin
-	)
-	# if v2 will pass before v1 arrives
-	return v2_tta < v1_tta
+	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=0)
+	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=CAR_LENGTH + safety_dist)
+
+	if not math.isfinite(v2_tta_conflict) or math.isfinite(v1_tta_conflict) or v2_tta_conflict > v1_tta_conflict:
+		return None
+	
+	return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
 
 
 

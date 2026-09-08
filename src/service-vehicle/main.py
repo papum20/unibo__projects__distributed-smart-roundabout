@@ -171,7 +171,7 @@ async def loop_physics(client, s: RuntimeState = state):
 			dt			= dt, 
 			max_speed	= s.vehicle.params.max_speed
 		)
-		s.vehicle = vehicle_navigate(dt, s.vehicle, logger=logger)
+		s.vehicle = vehicle_navigate(s.vehicle, dt, logger=logger)
 
 		if s.vehicle.nav_state == VehicleNavState.EXITING and math_utils.get_dist(s.vehicle.pos, ROUNDABOUT_POS) > AREA_RADIUS:
 			vehicle_reset(s.vehicle)

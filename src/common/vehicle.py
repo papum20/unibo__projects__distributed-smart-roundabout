@@ -23,7 +23,7 @@ from common.models.vehicle import (
 
 
 
-def vehicle_navigate(dt: float, v: Vehicle, logger: logging.Logger|None = None) -> Vehicle:
+def vehicle_navigate(v: Vehicle, dt: float, logger: logging.Logger|None = None) -> Vehicle:
 	if v.speed == 0 and v.acceleration <= 0:
 		# stopped, do not move
 		return v
@@ -120,11 +120,11 @@ def is_same_approach_road(v1: Vehicle, v2: VehiclePosition) -> bool:
 
 
 
-def evaluate_safely(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
+def evaluate_safely(v1: Vehicle, v_others: list[VehiclePosition]) -> Command|None:
 	""" 
 	Check if the vehicle should slow down to avoid crashing in the one in front.
 	This is an additional layer of safety to the controller.
-	@return : the max acceleration that can be kept safely
+	@return : the max acceleration that can be kept safely, or None if none is safe
 	"""
 	new_acc		= v1.params.max_accel
 	closest_v2	= None
@@ -154,15 +154,21 @@ def evaluate_safely(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 
 	if closest_v2 is not None:
 		safety_margin_soft	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.get_acc_brake())
+		safety_margin_hard	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.params.max_brake)
 		if safety_margin_soft < VEHICLE_SAFETY_MARGIN_M + v1.get_reaction_time_dist():
 			if closest_gap < VEHICLE_SAFETY_MARGIN_M:
 				# start braking hard immediately
-				# (if safety_margin_hard < VEHICLE_SAFETY_MARGIN_M, it may already be too late)
-				new_acc = min(new_acc, -v1.params.max_brake)
+				if safety_margin_hard < VEHICLE_SAFETY_MARGIN_M:
+					# it may already be too late
+					new_acc = None
+				else:
+					new_acc = min(new_acc, -v1.params.max_brake)
 			else:
 				new_acc = min(new_acc, -v1.get_acc_brake())
 		elif closest_gap < VEHICLE_SAFETY_MARGIN_M:
 				# if gap too close: increase it
 				new_acc = min(new_acc, -v1.get_acc_brake())
 
+	if new_acc is None:
+		return None
 	return Command(target_acceleration=new_acc)

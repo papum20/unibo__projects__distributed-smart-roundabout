@@ -1,6 +1,7 @@
 import math
 
 from common.const import ROAD_WIDTH, ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS
+from common.models.models import Position
 
 
 
@@ -9,6 +10,17 @@ def get_road_angle(road_index: int, n_roads: int = ROUNDABOUT_N_ROADS) -> float:
 	@return the angle of the road in radians (0 is East, pi/2 is North)
 	"""
 	return (2 * math.pi / n_roads) * road_index
+
+
+def get_entry(road_index: int, n_roads: int = ROUNDABOUT_N_ROADS) -> Position:
+	"""
+	@return the position of the road's entry in the roundabout
+	"""
+	angle = get_road_angle(road_index, n_roads)
+	return Position(
+		x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS * math.cos(angle),
+		y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS * math.sin(angle),
+	)
 	
 
 def get_point_on_road(

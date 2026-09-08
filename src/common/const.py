@@ -1,3 +1,5 @@
+import math
+
 from common.models.models import Position
 
 
@@ -14,6 +16,7 @@ ROUNDABOUT_POS			= Position(x=0, y=0)
 # meters of boundary from center (furthest point from the center)
 ROUNDABOUT_RADIUS		= 30.0
 ROUNDABOUT_N_ROADS		= 4
+ROUNDABOUT_PERIMETER	= 2 * math.pi * ROUNDABOUT_RADIUS
 
 LANE_WIDTH		= 5.0
 ROAD_LENGTH		= AREA_RADIUS - ROUNDABOUT_RADIUS	# length in the visualization

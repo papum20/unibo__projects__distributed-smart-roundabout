@@ -1,15 +1,16 @@
 import asyncio
 import json
 import logging
+import math
 import time
 import aiomqtt
 
 from common import math_utils, physics, roundabout, vehicle
 from common.const import (
-	CAR_LENGTH, ROUNDABOUT_N_ROADS, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_PROXIMITY_DIST, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
+	CAR_LENGTH, ROUNDABOUT_N_ROADS, ROUNDABOUT_PERIMETER, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_PROXIMITY_DIST, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
 )
 from common.get_env import config
-from common.models.models import Command
+from common.models.models import Command, SystemCommand, SystemCommandValue
 from common.models.vehicle import (
 	Vehicle, VehicleNavState, VehiclePosition, VehicleState
 )
@@ -17,6 +18,8 @@ from common.models.vehicle import (
 
 
 logger = logging.getLogger(__name__)
+
+is_paused	: bool	= False
 
 active_vehicles			: dict[str, Vehicle]	= {}
 # time of last update received for each
@@ -40,6 +43,30 @@ VISION_MATCH_TOLERANCE_M	= 5.0
 
 
 
+def sort_vehicles(vehicles: list[Vehicle]) -> list[Vehicle]:
+	"""
+	Sort vehicles, so that we have updated acc values where it's most important:
+	- those in front first (inside the roundabout, sort clockwise)
+	- inside has priority on approaching; approaching vehicles should play it safer
+	- exiting vehicles don't matter much
+	"""
+	def sort_key(v: Vehicle) -> tuple[int, float]:
+		distance_to_center = math_utils.get_dist(v.pos, ROUNDABOUT_POS)
+
+		if v.nav_state == VehicleNavState.EXITING:
+			# furthest from center first
+			return 0, -distance_to_center
+		if v.nav_state == VehicleNavState.IN_ROUNDABOUT:
+			# Numeric angle order: 0 -> 2*pi
+			return 1, v.pos_angle % (2 * math.pi)
+		if v.nav_state == VehicleNavState.APPROACHING:
+			# closest to center first
+			return 2, distance_to_center
+
+		return 3, 0.0
+	return sorted(vehicles, key=sort_key)
+
+
 def should_yield_to(v1: Vehicle, v2: Vehicle) -> bool:
 	"""
 	Determine if v1 should yield to v2, based on the precedence queue
@@ -56,16 +83,34 @@ def should_yield_to(v1: Vehicle, v2: Vehicle) -> bool:
 	return False
 
 
+def vehicle_enters_later_safely(
+	v_app		: Vehicle,
+	v_in		: Vehicle,
+	v_app_acc	: float,
+	v_in_acc	: float|None = None
+) -> bool:
+	"""
+	@return : True if v_app enters later and does it safely
+	"""
+	predicted = physics.vehicle_enters_later( v1=v_app, v2=v_in, v1_acc=v_app_acc, v2_acc=v_in_acc )
+	if predicted is not None:
+		pred_v1, pred_v2	= predicted
+		cmd					= vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()])
+		return cmd is not None and cmd.target_acceleration >= v_app_acc
+	return False
+		
+
+
 
 def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> dict[str, Command]:
 	"""
 	@param vehicles: a list of all current vehicles.
 	@return a dictionary mapping vehicle_id -> Command.
 	"""
+	vehicles		= sort_vehicles(vehicles)
 	vehicles_pos	= [v.to_pos() for v in vehicles]
-	# Default: tell everyone to maintain speed.
-	# Each update can only reduce it.
-	commands 		= {v.id: Command(target_acceleration=v.params.max_accel) for v in vehicles}
+	# default: None, tell everyone to maintain speed, each update can only reduce it.
+	commands 		= {}
 
 	for v1 in vehicles:
 		if v1.nav_state == VehicleNavState.EXITING:
@@ -77,7 +122,7 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 		# don't add disconnected vehicles: will give them priority anyway (if possible) - otherwise they will fill the queue
 		if v1.state == VehicleState.NORMAL and v1.nav_state == VehicleNavState.APPROACHING and v1.id not in precedence_queue:
 			dist_to_roundabout = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH
-			if dist_to_roundabout <= ROUNDABOUT_PROXIMITY_DIST:
+			if dist_to_roundabout <= 6 * CAR_LENGTH:
 				precedence_queue.append(v1.id)
 		
 		
@@ -85,8 +130,12 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 
 		# step 1: safety checks
 
-		commands[v1.id].target_acceleration = vehicle.evaluate_safely(v1, vehicles_pos).target_acceleration
-		
+		safe_cmd = vehicle.evaluate_safely(v1, vehicles_pos)
+		if safe_cmd is not None:
+			commands[v1.id] = Command(target_acceleration=safe_cmd.target_acceleration)
+		else:
+			commands[v1.id] = Command(target_acceleration=-v1.params.max_brake)
+
 		# step 2: optimizing, with max acc from prev step
 
 		for v2 in vehicles:
@@ -96,7 +145,9 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 			if v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2.nav_state == VehicleNavState.APPROACHING:
 				
 				if should_yield_to(v1, v2) or v2.state != VehicleState.NORMAL:
-					new_acc				= commands[v1.id].target_acceleration
+					new_acc		= commands[v1.id].target_acceleration
+					# use updated acc if possible, for better prediction
+					v2_curr_acc	= commands[v2.id].target_acceleration if commands.get(v2.id) is not None else v2.acceleration
 
 					conflict_angle		= roundabout.get_road_angle(v2.entry_road)
 					v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
@@ -104,7 +155,7 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 					v1_dist_to_exit		= math_utils.get_dist_on_circle(v1.pos_angle, v1_exit_angle)
 
 					# check if v1 exits earlier
-					if v1_dist_to_exit <= v1_dist_to_conflict:
+					if v1_dist_to_exit <= v1_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
 						continue
 					if v2.state != VehicleState.NORMAL:
 						# v2 is out of control: in failsafe mode, it will behave cautiously.
@@ -116,21 +167,34 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 							commands[v1.id].target_acceleration = min(new_acc, -v1.get_acc_brake())
 						continue
 
-					# coordinate with v2 (which has priority, in case), looking for the fastest option
+					# coordinate with v2 (which has priority, in case), looking for the fastest option.
+					# since v2 has priority, try to make it pass first (without hard braking, since it's not an emergency);
+					# if it can't pass first with any of the possible accelerations for v1, just go at max acc (max or 0).
 
-					if physics.vehicle_enters_later( v2, v1, v1_acc=v2.acceleration, v2_acc=new_acc ):
-						continue
-					v1_acc_choices = (new_acc, 0.0, -v1.get_acc_brake(), -v1.params.max_brake)
+					v1_acc_choices		= [acc for acc in (new_acc, 0.0, -v1.get_acc_brake()) if acc <= new_acc]
 					for v1_acc in v1_acc_choices:
-						if new_acc >= v1_acc and physics.vehicle_can_enter_safely( v2, v1, v1_acc=v2.acceleration, v2_acc=v1_acc ):
-							commands[v1.id].target_acceleration = v1_acc
-							break
+						predicted = physics.vehicle_enters_first( v2, v1, v1_acc=v2_curr_acc, v2_acc=v1_acc )
+						if predicted is not None:
+							pred_v2, pred_v1	= predicted
+							# check safety of v1 behind v2
+							pred_cmd			= vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()])
+							# if possible, look for a choice which avoids hard braking;
+							# as a fallback, look for any safe option
+							if pred_cmd is not None and pred_cmd.target_acceleration >= -v1.get_acc_brake():
+								commands[v1.id].target_acceleration = v1_acc
+								break
+					else:
+						# if v2 has already stopped, the above calculations won't work: v1 should try to slow down, safely
+						stop_dist = v1.get_stop_dist(v1.get_acc_brake()) + v1.get_reaction_time_dist() + CAR_LENGTH / 2 + VEHICLE_SAFETY_MARGIN_M
+						if stop_dist >= v1_dist_to_conflict:
+							commands[v1.id].target_acceleration = min(new_acc, -v1.get_acc_brake())
 					# if can't stop safely, just pass: the approaching v2,
 					# either guided by controller or failsafe mode, will brake
 
 			# inside-approaching, conflict
 			elif v1.nav_state == VehicleNavState.APPROACHING and v2.nav_state == VehicleNavState.IN_ROUNDABOUT:
-				new_acc				= commands[v1.id].target_acceleration
+				new_acc		= commands[v1.id].target_acceleration
+				v2_curr_acc	= commands[v2.id].target_acceleration if commands.get(v2.id) is not None else v2.acceleration
 
 				conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 				v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
@@ -138,46 +202,73 @@ def evaluate(vehicles: list[Vehicle], conflict_time_margin_s: float = 2.0) -> di
 				v2_dist_to_exit		= math_utils.get_dist_on_circle(v2.pos_angle, v2_exit_angle)
 				
 				# check if v2 exits earlier
-				if v2_dist_to_exit <= v2_dist_to_conflict:
+				if v2_dist_to_exit <= v2_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
 					continue
 
-				# if v2 has to yield, v1 can just accelerate.
+				# even if v2 has to yield, v1 still has to check:
+				# v2 may be unable to slow down safely, and v1 should anyway check for those ahead.
 				# if v2 in failsafe, it will have priority, but maybe v1 can pass without interfering
-				# pylint: disable-next=arguments-out-of-order
-				if v2.state == VehicleState.NORMAL and should_yield_to(v2, v1):
+
+				# coordinate with v2
+
+				if vehicle_enters_later_safely(v1, v2, new_acc, v_in_acc=v2_curr_acc):
 					continue
 
-				# coordinate with v2 (which has priority, in case)
+				# if possible, go faster
+				predicted = physics.vehicle_enters_first(v1, v2, v1_acc=new_acc, v2_acc=v2_curr_acc)
+				if predicted is not None:
+					pred_v1, pred_v2	= predicted
+					# check safety of v2 behind v1
+					pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()])
+					# for simplicity, we allow hard braking here
+					if pred_cmd is not None:
+						continue
 
-				if physics.vehicle_enters_later( v1, v2, v1_acc=new_acc, v2_acc=v2.acceleration ):
-					continue
-				if physics.vehicle_can_enter_safely(v1, v2, v1_acc=new_acc, v2_acc=v2.acceleration):
-					# if possible, go faster
-					continue
 				# if still far from roundabout, no need to brake
 				v1_dist_to_entry = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH - CAR_LENGTH / 2
-				if v1.get_stop_dist(acc_brake=v1.get_acc_brake()) + v1.get_reaction_time_dist() - v1_dist_to_entry < ROUNDABOUT_PROXIMITY_DIST:
+				if v1_dist_to_entry - v1.get_stop_dist(acc_brake=v1.get_acc_brake()) - v1.get_reaction_time_dist() > 0: # ROUNDABOUT_PROXIMITY_DIST:
 					# as long as you can start braking later, no need to already do it now
 					continue
-				v1_acc_choices = (0.0, -v1.get_acc_brake(), -v1.params.max_brake)
+
+				v1_acc_choices		= [acc for acc in (0.0, -v1.get_acc_brake(), -v1.params.max_brake) if acc <= new_acc]
+				hard_brake_choice	= None
 				for v1_acc in v1_acc_choices:
-					if new_acc > v1_acc and physics.vehicle_can_enter_safely( v1, v2, v1_acc=v1_acc, v2_acc=v2.acceleration ):
+					predicted = physics.vehicle_enters_first( v1, v2, v1_acc=v1_acc, v2_acc=v2_curr_acc )
+					if predicted is not None:
+						pred_v1, pred_v2	= predicted
+						# check safety of v2 behind v1
+						pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()])
+						if hard_brake_choice is None and (pred_cmd is not None and pred_cmd.target_acceleration == -v1.params.max_brake):
+							hard_brake_choice = v1_acc
+						elif pred_cmd is not None and pred_cmd.target_acceleration >= -v1.get_acc_brake():
+							commands[v1.id].target_acceleration = v1_acc
+							break
+					# else: v1 enters later, let's check if it can do it safely
+					elif vehicle_enters_later_safely(v1, v2, new_acc, v_in_acc=v2_curr_acc):
 						commands[v1.id].target_acceleration = v1_acc
 						break
 				else:
-					# no safe option: wait for v2 to pass
-					commands[v1.id].target_acceleration = -v1.params.max_brake
-			
+					if hard_brake_choice is not None:
+						commands[v1.id].target_acceleration = hard_brake_choice
+					else:
+						# no safe option: wait for v2 to pass
+						commands[v1.id].target_acceleration = -v1.params.max_brake
+
 	return commands
 
 
 
 async def loop_listen(client):
+	global is_paused
 	telemetry_topic = (f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}")
 	vision_topic	= (f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_VISION_SUFFIX}")
+	sysctrl_topic			= f"{config.TOPIC_SYSCTRL_PREFIX}/{config.TOPIC_SYSCTRL_BROADCAST_SUFFIX}"
+	sysctrl_broadcast_topic = f"{config.TOPIC_SYSCTRL_PREFIX}/+"
 
 	await client.subscribe(telemetry_topic)
 	await client.subscribe(vision_topic)
+	await client.subscribe(sysctrl_topic)
+	await client.subscribe(sysctrl_broadcast_topic)
 
 	async for message in client.messages:
 		try:
@@ -195,6 +286,15 @@ async def loop_listen(client):
 					if v_pos.timestamp is None:
 						v_pos.timestamp = time.time()
 					vehicles_pos.append(v_pos)
+
+			elif str(message.topic) in (sysctrl_topic, sysctrl_broadcast_topic):
+				command = SystemCommand(**payload)
+				if command.command == SystemCommandValue.PAUSE:
+					is_paused = True
+					logger.info("SysCtrl: Simulation PAUSED")
+				elif command.command == SystemCommandValue.RESUME:
+					is_paused = False
+					logger.info("SysCtrl: Simulation RESUMED")
 
 		except Exception as error:
 			logger.error("Failed to parse vehicle message: %s", error)
@@ -221,9 +321,19 @@ async def loop_control(client: aiomqtt.Client):
 	global ghosts
 	logger.info("Controller Orchestration Loop started.")
 	ghost_counter	= 0
+	last_update_t	= time.time()
 
 	while True:
 		current_t	= time.time()
+		
+		if is_paused:
+			# prevent problems with times
+			for vehicle_id in active_vehicles:
+				active_vehicles_times[vehicle_id] += current_t - last_update_t
+			last_update_t = current_t
+
+			await asyncio.sleep(1.0 / UPDATES_P_S_CONTROLLER)
+			continue
 
 		# clear old vision data
 		while True:
@@ -243,7 +353,7 @@ async def loop_control(client: aiomqtt.Client):
 			if v.state	!= VehicleState.DISCONNECTED:
 				v_t		= active_vehicles_times.get(v.id, current_t)
 				v_list.append(
-					vehicle.vehicle_navigate(dt=current_t - v_t, v=v.model_copy(deep=True))
+					vehicle.vehicle_navigate(v=v.model_copy(deep=True), dt=current_t - v_t)
 				)
 		# try to merge vision data
 		for v_pos in vehicles_pos:
@@ -272,7 +382,7 @@ async def loop_control(client: aiomqtt.Client):
 				)
 
 				v_pos_t = v_pos.timestamp if v_pos.timestamp is not None else current_t
-				ghost_v = vehicle.vehicle_navigate(dt=current_t - v_pos_t, v=ghost_v)
+				ghost_v = vehicle.vehicle_navigate(v=ghost_v, dt=current_t - v_pos_t)
 				
 				ghosts[ghost_id] = ghost_v
 				# if a ghost in a similar position is found, it won't be added because it will match with this
@@ -280,7 +390,6 @@ async def loop_control(client: aiomqtt.Client):
 				logger.debug("Detected DISCONNECTED vehicle %s: %s", ghost_id, ghost_v)
 
 		commands	= evaluate(v_list)
-		current_t	= time.time()
 		
 		for v_n, (vid, cmd) in enumerate(commands.items(), start=1):
 			if vid.startswith("GHOST"):
@@ -298,6 +407,7 @@ async def loop_control(client: aiomqtt.Client):
 			topic = f"{config.TOPIC_VEHICLE_PREFIX}/{vid}/{config.TOPIC_VEHICLE_COMMAND_SUFFIX}"
 			await client.publish(topic, payload=cmd.model_dump_json())
 			
+		last_update_t = current_t
 		await asyncio.sleep(1.0 / UPDATES_P_S_CONTROLLER)
 
 

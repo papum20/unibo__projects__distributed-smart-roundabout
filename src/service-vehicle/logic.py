@@ -3,7 +3,6 @@ import random
 
 from common import math_utils, physics, roundabout, vehicle
 from common.const import (
-	CAR_LENGTH,
 	ROAD_WIDTH,
 	ROUNDABOUT_PROXIMITY_DIST,
 	LANE_WIDTH,
@@ -76,7 +75,11 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 	):
 		return Command(target_acceleration=-v1.params.max_brake)
 
-	new_acc = vehicle.evaluate_safely(v1, v_others).target_acceleration
+	safe_cmd = vehicle.evaluate_safely(v1, v_others)
+	if safe_cmd is not None:
+		new_acc = safe_cmd.target_acceleration
+	else:
+		new_acc = -v1.params.max_brake
 
 	# slower speed
 	if abs(v1.speed * VEHICLE_SPEED_TOL_PERC - VEHICLE_FAILSAFE_MAX_SPEED_M_S) > 0:

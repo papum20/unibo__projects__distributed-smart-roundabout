@@ -16,6 +16,16 @@ def get_dist(pos1: Position, pos2: Position) -> float:
 	return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
+def get_point_on_circle(angle: float, radius: float = ROUNDABOUT_RADIUS) -> Position:
+	"""
+	@return: the coordinates of a point on a circle
+	"""
+	return Position(
+		x=ROUNDABOUT_POS.x + radius * math.cos(angle),
+		y=ROUNDABOUT_POS.y + radius * math.sin(angle),
+	)
+
+
 def get_dist_on_circle(angle1: float, angle2: float, radius: float = ROUNDABOUT_RADIUS) -> float:
 	"""
 	Note that the angle is calculated counter-clockwise, so the result is always the positive distance
