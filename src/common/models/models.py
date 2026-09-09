@@ -1,6 +1,6 @@
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 
@@ -22,6 +22,7 @@ class SystemCommandValue(Enum):
 	EXIT_DISCONNECTED	= "EXIT_DISCONNECTED"
 
 class SystemCommand(BaseModel):
-	command		: SystemCommandValue
-	vehicle_id	: str | None = None
+	command			: SystemCommandValue
+	vehicle_id		: str | None = None
+	vehicle_count	: int | None = Field(default=None, ge=1, le=99)
 	

@@ -10,6 +10,7 @@ from common.const import (
 	ROUNDABOUT_N_ROADS,
 	ROUNDABOUT_POS,
 	ROUNDABOUT_RADIUS,
+	VEHICLE_SAFETY_MARGIN_M,
 	VEHICLE_SPEED_TOL_PERC
 )
 from common.models.models import (
@@ -38,20 +39,29 @@ def vehicle_navigate_spawn(
 	
 	v_pos			= v.to_pos()
 	v_dist			= math_utils.get_dist(v.pos, ROUNDABOUT_POS)
+	front_gap		= float("inf")
+	front_v2_pos	= None
 	collisions_n	= 0
 
-	for other in other_positions:
-		if other.nav_state != v_pos.nav_state:
+	for v2_pos in other_positions:
+		if v2_pos.nav_state != v_pos.nav_state or not v.is_on_same_road(v2_pos):
 			continue
-		if not physics.vehicle_collide(v_pos, other):
+
+		v2_dist = math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS)
+		if not physics.vehicle_collide(v_pos, v2_pos):
+			if v2_dist < v_dist:
+				front_v2_pos	= v2_pos
+				front_gap		= min(front_gap, v_dist - v2_dist)
 			continue
 		collisions_n += 1
 
-		other_distance = math_utils.get_dist(other.pos, ROUNDABOUT_POS)
-		if other_distance < v_dist:
-			logger.debug("Vehicle %s waiting for closer vehicle %s", v.id, other.id)
+		if v2_dist < v_dist:
+			logger.debug("Vehicle %s waiting for overlapping closer vehicle %s", v.id, v2_pos.id)
 			return Command(target_acceleration=-v.params.max_brake)
+
 	if collisions_n > 0:
+		if front_v2_pos is not None:
+			return vehicle.evaluate_safely(v, [front_v2_pos], front_v2_pos.get_reaction_time_dist())
 		return Command(target_acceleration=v.params.max_accel)
 	return None
 
@@ -70,8 +80,9 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 	dist_to_entry = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH
 	if (
 		v1.nav_state == VehicleNavState.APPROACHING and v1.speed > 0
-		# if already stopped close to the entrance, continue (otherwise will never enter)
-		and v1.get_stop_dist() >= dist_to_entry > ROUNDABOUT_PROXIMITY_DIST
+		# if already stopped close to the entrance, continue (otherwise will never enter).
+		# add VEHICLE_SAFETY_MARGIN_M so that it won't stop after the entrance.
+		and v1.get_stop_dist() >= dist_to_entry + VEHICLE_SAFETY_MARGIN_M > ROUNDABOUT_PROXIMITY_DIST
 	):
 		return Command(target_acceleration=-v1.params.max_brake)
 
@@ -79,27 +90,48 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 	if safe_cmd is not None:
 		new_acc = safe_cmd.target_acceleration
 	else:
-		new_acc = -v1.params.max_brake
+		return Command(target_acceleration=-v1.params.max_brake)
 
 	# slower speed
 	if abs(v1.speed * VEHICLE_SPEED_TOL_PERC - VEHICLE_FAILSAFE_MAX_SPEED_M_S) > 0:
 		if v1.speed > VEHICLE_FAILSAFE_MAX_SPEED_M_S:
-			new_acc = -v1.params.max_brake * 0.5
+			new_acc = min(new_acc, -v1.get_acc_brake())
 	else:
-		new_acc = 0.0
+		new_acc = min(new_acc, 0.0)
 
-	for v2 in v_others:
+	for v2_pos in v_others:
 		# entrance
-		if v1.nav_state == VehicleNavState.APPROACHING and v2.nav_state == VehicleNavState.IN_ROUNDABOUT:
-			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH
+		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
+
+			# avoid deadlocks if v2 has stopped
+			if v2_pos.speed == 0.0:
+				continue
 			
-			if v1_dist_to_conflict < ROUNDABOUT_PROXIMITY_DIST:
+			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			
+			if v1_dist_to_conflict < ROUNDABOUT_PROXIMITY_DIST + ROAD_WIDTH:
 				conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-				v2_dist_to_conflict = math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
+				v2_dist_to_conflict = math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
 				
 				# most cautios safety distance
-				if v2_dist_to_conflict <= v2.get_stop_dist():
-					new_acc = min(new_acc, -v1.params.max_brake)
+				#if v2_dist_to_conflict <= (
+				#	v2_pos.get_stop_dist(acc_brake=v1.get_acc_brake()) + v2_pos.get_reaction_time_dist() + VEHICLE_SAFETY_MARGIN_M
+				#):
+				#	new_acc = -v1.params.max_brake
+				#	break
+
+				v2 = vehicle.vehicle_from_pos(v2_pos)
+				# use acc max, to be safe 
+				predicted = physics.vehicle_enters_first(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
+				if predicted is not None:
+					pred_v1, pred_v2	= predicted
+					# check safety of v2 behind v1.
+					# double reaction time, for double latency of communicating with controller forth and back
+					pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
+					if pred_cmd is not None:
+						continue
+				else:
+					new_acc = -v1.params.max_brake
 					break
 
 	return Command(target_acceleration=new_acc)

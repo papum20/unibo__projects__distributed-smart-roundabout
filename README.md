@@ -26,6 +26,8 @@ Viewer: http://localhost:8080
 ./src/ctrl.sh d 4fd2
 # exit disconnected
 ./src/ctrl.sh n 4fd2
+# send the command to 5 random vehicles
+./src/ctrl.sh f 5
 ```
 
 

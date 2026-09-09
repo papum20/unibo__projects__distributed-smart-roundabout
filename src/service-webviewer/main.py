@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import random
 from contextlib import asynccontextmanager
 
 import aiomqtt
@@ -34,11 +35,12 @@ controller_precedence_q						= []
 
 
 async def mqtt_listener():
-	global tot_vehicles_spawned, controller_precedence_q
+	global tot_vehicles_spawned, controller_ghosts_list, controller_precedence_q
 
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
-		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}')
 		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/{config.TOPIC_VEHICLE_COLLISIONS_SUFFIX}')
+		await client.subscribe(f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_RESET_SUFFIX}")
+		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}')
 		await client.subscribe(config.TOPIC_CONTROLLER_STATUS)
 		print("Viewer subscribed to telemetry and controller status...")
 
@@ -50,13 +52,15 @@ async def mqtt_listener():
 				controller_ghosts_list	= payload.get("ghosts", [])
 				continue
 
+			if str(message.topic).endswith(config.TOPIC_VEHICLE_RESET_SUFFIX):
+				tot_vehicles_spawned += 1
+				continue
+
 			if str(message.topic) == f'{config.TOPIC_VEHICLE_PREFIX}/{config.TOPIC_VEHICLE_COLLISIONS_SUFFIX}':
 				vehicles_collisions.append(VehicleCollision(**payload))
 				continue
 
 			vehicle						= Vehicle(**payload)
-			if vehicle.id not in vehicles_state:
-				tot_vehicles_spawned	+= 1
 			vehicles_state[vehicle.id]	= vehicle
 
 # https://fastapi.tiangolo.com/advanced/events/#use-case
@@ -90,8 +94,14 @@ async def get_config():
 
 @app.post("/api/control")
 async def control_sim(cmd: SystemCommand):
-	resolved_vehicle_id = None
-	if cmd.vehicle_id:
+	target_vehicle_ids = []
+
+	if cmd.vehicle_count is not None:
+		target_vehicle_ids = random.sample(
+			list(vehicles_state),
+			min(cmd.vehicle_count, len(vehicles_state))
+		)
+	elif cmd.vehicle_id:
 		matches = [
 			vehicle_id
 			for vehicle_id in vehicles_state
@@ -110,21 +120,26 @@ async def control_sim(cmd: SystemCommand):
 					"matches": matches,
 				},
 			)
-		resolved_vehicle_id = matches[0]
-	
-	topic = (
-		f"{config.TOPIC_SYSCTRL_PREFIX}/{resolved_vehicle_id}"
-		if cmd.vehicle_id
-		else f"{config.TOPIC_SYSCTRL_PREFIX}/{config.TOPIC_SYSCTRL_BROADCAST_SUFFIX}"
-	)
-	resolved_cmd = cmd.model_copy(
-		update={"vehicle_id": resolved_vehicle_id}
-	)
+		target_vehicle_ids = [matches[0]]
+	else:
+		target_vehicle_ids = [None]
 
+	published_commands = []
 	async with aiomqtt.Client(hostname=config.HOST_BROKER,  port=config.PORT_BROKER) as client:
-		await client.publish(topic, payload=resolved_cmd.model_dump_json())
+		for vehicle_id in target_vehicle_ids:
+			topic = (
+				f"{config.TOPIC_SYSCTRL_PREFIX}/{vehicle_id}"
+				if vehicle_id
+				else f"{config.TOPIC_SYSCTRL_PREFIX}/{config.TOPIC_SYSCTRL_BROADCAST_SUFFIX}"
+			)
+			resolved_cmd = cmd.model_copy(
+				update={"vehicle_id": vehicle_id, "vehicle_count": None}
+			)
 
-	return {"status": "ok", "command": resolved_cmd, "topic": topic}
+			await client.publish(topic, payload=resolved_cmd.model_dump_json())
+			published_commands.append(resolved_cmd)
+
+	return {"status": "ok", "commands": published_commands}
 
 
 @app.get("/api/state")

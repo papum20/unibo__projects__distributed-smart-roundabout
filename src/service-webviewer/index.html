@@ -165,7 +165,7 @@
 
 
 				document.getElementById("vehicle-count").textContent =
-   					`Total spawned: ${totVSpawned}`;
+   					`Total spawned: ${totVSpawned} | Active vehicles: ${vehicleIds.length} | Current ghosts: ${Object.keys(ghosts).length}`;
 
 				const collisionHtml = collisions.length === 0
 					? "<div class=\"hud-line\">None</div>"
@@ -364,7 +364,7 @@
 				
 				// list each vehicle's stats
 				let htmlContent = "";
-				for (let vehicle_id in vehicles) {
+				for (let vehicle_id of vehicleIds) {
 					let v		= vehicles[vehicle_id];
 					let shortId = vehicle_id.substring(0, 4);
 					

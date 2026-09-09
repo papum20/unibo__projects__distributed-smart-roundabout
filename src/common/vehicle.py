@@ -18,8 +18,62 @@ from common.models.models import (
 	Position
 )
 from common.models.vehicle import (
-	Vehicle, VehicleNavState, VehiclePosition
+	Vehicle, VehicleNavState, VehiclePosition, VehicleState
 )
+
+
+
+def get_predicted_entry(v_pos: VehiclePosition) -> int:
+	"""
+	Predict the entry road in the safest way possible (worst case scenario).
+	@return: the entry road index
+	"""
+	angle_per_road	= (2 * math.pi) / ROUNDABOUT_N_ROADS
+
+	if v_pos.nav_state == VehicleNavState.APPROACHING:
+		# closest road based on current angle
+		return round(v_pos.pos_angle / angle_per_road) % ROUNDABOUT_N_ROADS
+	else:
+		return 0	# doesn't matter
+
+
+def get_predicted_exit(v_pos: VehiclePosition) -> int:
+	"""
+	Predict the exit road in the safest way possible (worst case scenario).
+	@return: the exit road index
+	"""
+	angle_per_road	= (2 * math.pi) / ROUNDABOUT_N_ROADS
+
+	if v_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
+		# worst-case scenario: it exits at the furthest possible road (the one just passed)
+		# int() acts as floor()
+		return int((v_pos.pos_angle - 1) / angle_per_road) % ROUNDABOUT_N_ROADS
+	elif v_pos.nav_state == VehicleNavState.EXITING:
+		# closest road based on current angle
+		return round(v_pos.pos_angle / angle_per_road) % ROUNDABOUT_N_ROADS
+	else:
+		return 0	# doesn't matter
+
+
+def vehicle_from_pos(
+	v_pos	: VehiclePosition,
+	new_id	: str | None	= None,
+	state	: VehicleState	= VehicleState.DISCONNECTED
+) -> Vehicle:
+	"""
+	Create a Vehicle object from a VehiclePosition object.
+	"""
+	return Vehicle(
+		id			= new_id if new_id is not None else v_pos.id,
+		pos			= v_pos.pos,
+		pos_angle	= v_pos.pos_angle,
+		speed		= v_pos.speed,
+		nav_state	= v_pos.nav_state,
+
+		state		= state,
+		entry_road	= get_predicted_entry(v_pos),
+		exit_road	= get_predicted_exit(v_pos)
+	)
 
 
 
@@ -80,54 +134,18 @@ def vehicle_navigate(v: Vehicle, dt: float, logger: logging.Logger|None = None) 
 
 
 
-def get_predicted_entry(v_pos: VehiclePosition) -> int:
-	"""
-	Predict the entry road in the safest way possible (worst case scenario).
-	@return: the entry road index
-	"""
-	angle_per_road	= (2 * math.pi) / ROUNDABOUT_N_ROADS
-
-	if v_pos.nav_state == VehicleNavState.APPROACHING:
-		# closest road based on current angle
-		return round(v_pos.pos_angle / angle_per_road) % ROUNDABOUT_N_ROADS
-	else:
-		return 0	# doesn't matter
-
-
-def get_predicted_exit(v_pos: VehiclePosition) -> int:
-	"""
-	Predict the exit road in the safest way possible (worst case scenario).
-	@return: the exit road index
-	"""
-	angle_per_road	= (2 * math.pi) / ROUNDABOUT_N_ROADS
-
-	if v_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
-		# worst-case scenario: it exits at the furthest possible road (the one just passed)
-		# int() acts as floor()
-		return int((v_pos.pos_angle - 1) / angle_per_road) % ROUNDABOUT_N_ROADS
-	elif v_pos.nav_state == VehicleNavState.EXITING:
-		# closest road based on current angle
-		return round(v_pos.pos_angle / angle_per_road) % ROUNDABOUT_N_ROADS
-	else:
-		return 0	# doesn't matter
-
-
-def is_same_approach_road(v1: Vehicle, v2: VehiclePosition) -> bool:
-	road_angle	= roundabout.get_road_angle(v1.entry_road)
-	angle_diff	= (v2.pos_angle - road_angle) % (2 * math.pi)
-
-	return min(angle_diff, 2 * math.pi - angle_diff) < VEHICLE_ANGLE_TOL_RAD
-
-
-
-def evaluate_safely(v1: Vehicle, v_others: list[VehiclePosition]) -> Command|None:
+def evaluate_safely(
+	v1: Vehicle, v_others: list[VehiclePosition], additional_safety_margin: float = 0.0
+) -> Command|None:
 	""" 
 	Check if the vehicle should slow down to avoid crashing in the one in front.
 	This is an additional layer of safety to the controller.
+
 	@return : the max acceleration that can be kept safely, or None if none is safe
 	"""
-	new_acc		= v1.params.max_accel
-	closest_v2	= None
+	new_acc			= v1.params.max_accel
+	safety_margin	= VEHICLE_SAFETY_MARGIN_M + additional_safety_margin
+	closest_v2		= None
 	# closest non-negative distance to another v
 	closest_gap = float("inf")
 
@@ -140,33 +158,35 @@ def evaluate_safely(v1: Vehicle, v_others: list[VehiclePosition]) -> Command|Non
 				v2.pos_angle,
 			)
 		else:
-			if not is_same_approach_road(v1, v2):
+			if not v1.is_on_same_road(v2):
 				continue
 			v1_dist = math_utils.get_dist(v1.pos, ROUNDABOUT_POS)
 			v2_dist = math_utils.get_dist(v2.pos, ROUNDABOUT_POS)
-			if v2_dist >= v1_dist:
+			if (
+				(v1.nav_state == VehicleNavState.APPROACHING	and v2_dist >= v1_dist) or
+				(v1.nav_state == VehicleNavState.EXITING		and v2_dist <= v1_dist)
+			):
 				continue
-			gap = v1_dist - v2_dist
+			gap = abs(v1_dist - v2_dist)
 
 		if 0 < gap < closest_gap:
 			closest_gap	= gap
 			closest_v2	= v2
 
 	if closest_v2 is not None:
-		safety_margin_soft	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.get_acc_brake())
-		safety_margin_hard	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.params.max_brake)
-		if safety_margin_soft < VEHICLE_SAFETY_MARGIN_M + v1.get_reaction_time_dist():
-			if closest_gap < VEHICLE_SAFETY_MARGIN_M:
-				# start braking hard immediately
-				if safety_margin_hard < VEHICLE_SAFETY_MARGIN_M:
-					# it may already be too late
-					new_acc = None
-				else:
-					new_acc = min(new_acc, -v1.params.max_brake)
-			else:
+		braking_dist_soft	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.get_acc_brake())
+		braking_dist_hard	= v1.get_stop_behind_margin(closest_v2, v1_acc_brake=v1.params.max_brake)
+		if braking_dist_soft < safety_margin + v1.get_reaction_time_dist():
+			if braking_dist_soft > safety_margin:
 				new_acc = min(new_acc, -v1.get_acc_brake())
-		elif closest_gap < VEHICLE_SAFETY_MARGIN_M:
-				# if gap too close: increase it
+			elif braking_dist_hard > safety_margin:
+				# start braking hard immediately
+				new_acc = min(new_acc, -v1.params.max_brake)
+			else:
+				# it may already be too late
+				new_acc = None
+		elif closest_gap < safety_margin:
+				# if gap too close (even at speed 0): increase it
 				new_acc = min(new_acc, -v1.get_acc_brake())
 
 	if new_acc is None:

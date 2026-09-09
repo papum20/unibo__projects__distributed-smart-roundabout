@@ -3,7 +3,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-    echo "Usage: $0 {PAUSE|RESUME|FAILSAFE|CONTROLLER|DISCONNECT|RECONNECT} [vehicle-id]" >&2
+    echo "Usage: $0 {PAUSE|RESUME|FAILSAFE|CONTROLLER|DISCONNECT|RECONNECT} [vehicle-id|vehicle-count]" >&2
     exit 1
 fi
 
@@ -35,8 +35,13 @@ case "$raw" in
 esac
 
 if [ "$#" -eq 2 ]; then
-    vehicle_id="$2"
-    payload=$(printf '{"command":"%s","vehicle_id":"%s"}' "$cmd" "$vehicle_id")
+    param="$2"
+
+    if [[ "$param" =~ ^[1-9][0-9]?$ ]]; then
+        payload=$(printf '{"command":"%s","vehicle_count":%s}' "$cmd" "$param")
+    else
+        payload=$(printf '{"command":"%s","vehicle_id":"%s"}' "$cmd" "$param")
+    fi
 else
     payload=$(printf '{"command":"%s"}' "$cmd")
 fi

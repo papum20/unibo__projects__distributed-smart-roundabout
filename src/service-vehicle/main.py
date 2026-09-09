@@ -111,6 +111,15 @@ async def loop_listen_commands(client, s: RuntimeState = state):
 			logger.debug("Received command: %s", s.last_command)
 
 
+async def publish_reset(client):
+    topic = f"{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_RESET_SUFFIX}"
+    payload = json.dumps({
+        "vehicle_id": vehicle_id,
+        "timestamp": time.time(),
+    })
+    await client.publish(topic, payload=payload)
+
+
 async def loop_publish_vision(client, s: RuntimeState = state):
 	while True:
 		current_time = time.time()
@@ -159,7 +168,7 @@ async def loop_physics(client, s: RuntimeState = state):
 					s.vehicle.state = VehicleState.FAILSAFE
 				active_command	= evaluate_failsafe(s.vehicle, list(s.local_vision_vehicles.values()))
 				if not s.sysctrl_failsafe:
-					logger.warning("Network lost. FAILSAFE triggered.")
+					logger.debug("Network lost. FAILSAFE triggered.")
 			else:
 				s.vehicle.state	= VehicleState.NORMAL
 				active_command	= s.last_command
@@ -175,8 +184,10 @@ async def loop_physics(client, s: RuntimeState = state):
 
 		if s.vehicle.nav_state == VehicleNavState.EXITING and math_utils.get_dist(s.vehicle.pos, ROUNDABOUT_POS) > AREA_RADIUS:
 			vehicle_reset(s.vehicle)
+			await publish_reset(client)
 		v_pos = s.vehicle.to_pos()
 
+		# publish even for disconnected, only for debugging and displaying
 		telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}'
 		await client.publish(telemetry_topic, payload=s.vehicle.model_dump_json())
 		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
@@ -193,6 +204,7 @@ async def main(s: RuntimeState = state):
 	await asyncio.sleep(random.uniform(0.0, 5.0))
 	
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
+		await publish_reset(client)
 		# run both concurrently
 		await asyncio.gather(
 			loop_listen_commands(client, s),

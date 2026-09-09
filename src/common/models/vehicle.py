@@ -49,6 +49,14 @@ class VehiclePosition(BaseModel):
 	nav_state	: VehicleNavState
 	timestamp	: float | None = None
 
+	def get_reaction_time_dist(self) -> float:
+		"""
+		Calculate the distance traveled during the vehicle's reaction time.
+
+		@return: distance in meters
+		"""
+		return self.speed * VEHICLE_REACTION_TIME_S
+
 	def get_stop_dist(self, acc_brake: float = VEHICLE_DFLT_ACC_BRAKE_MAX_M_S2) -> float:
 		"""
 		Calculate the distance required to stop the vehicle, based on its current speed and max braking.
@@ -97,13 +105,15 @@ class Vehicle(BaseModel):
 	def get_reaction_time_dist(self) -> float:
 		"""
 		Calculate the distance traveled during the vehicle's reaction time.
+
 		@return: distance in meters
 		"""
-		return self.speed * VEHICLE_REACTION_TIME_S
+		return self.to_pos().get_reaction_time_dist()
 
 	def get_safety_dist(self, margin: float) -> float:
 		"""
 		Calculate a dynamic safety distance based on the vehicle's speed.
+
 		@param margin: additional safety margin (e.g. half a car length, if calculating it from the car on front)
 		"""
 		# dynamic safety distance based on speed (1s reaction time)
@@ -113,6 +123,7 @@ class Vehicle(BaseModel):
 	def get_stop_dist(self, acc_brake: float|None = None) -> float:
 		"""
 		Calculate the distance required to stop the vehicle, based on its current speed and max braking.
+
 		@param acc_brake: optional braking acceleration to use, otherwise use the vehicle's default max braking.
 		@return: distance in meters
 		"""
@@ -120,19 +131,25 @@ class Vehicle(BaseModel):
 		return self.to_pos().get_stop_dist(acc_brake = acc_brake)
 
 
-	def _has_same_approach_road(self, v2: VehiclePosition) -> bool:
-		road_angle	= roundabout.get_road_angle(self.entry_road)
+	def is_on_same_road(self, v2: VehiclePosition) -> bool:
+		"""
+		@return : True if v2 is on the same road (while either approaching or exiting)
+		"""
+		road_angle	= roundabout.get_road_angle(
+			self.entry_road	if self.nav_state == VehicleNavState.APPROACHING
+			else self.exit_road )
 		angle_diff	= (v2.pos_angle - road_angle) % (2 * math.pi)
-
 		return min(angle_diff, 2 * math.pi - angle_diff) < VEHICLE_ANGLE_TOL_RAD
 
 
 	def get_stop_behind_margin(
-			self, v2: VehiclePosition, v1_acc_brake: float|None = None, v2_acc_brake: float = VEHICLE_DFLT_ACC_BRAKE_MAX_M_S2
+			self, v2: VehiclePosition,
+			v1_acc_brake: float|None = None, v2_acc_brake: float = VEHICLE_DFLT_ACC_BRAKE_MAX_M_S2
 	) -> float:
 		"""
 		Check if this vehicle can stop behind another vehicle, i.e. if it could stop without crashing into it
 		if they were to both start to brake (both for straight line and circle).  
+		
 		@param v2: the other vehicle's position
 		@return: the available margin before it's to late to be able to stop behind the other vehicle
 		"""
@@ -142,11 +159,14 @@ class Vehicle(BaseModel):
 		elif self.nav_state == VehicleNavState.IN_ROUNDABOUT:
 			dist_to_v2	= math_utils.get_dist_on_circle(self.pos_angle, v2.pos_angle) - CAR_LENGTH
 		else:
-			if not self._has_same_approach_road(v2):
+			if not self.is_on_same_road(v2):
 				return float("inf")
 			v1_dist = math_utils.get_dist(self.pos, ROUNDABOUT_POS)
 			v2_dist = math_utils.get_dist(v2.pos, 	ROUNDABOUT_POS)
-			if v2_dist >= v1_dist:
+			if (
+				(self.nav_state == VehicleNavState.APPROACHING	and v2_dist >= v1_dist) or
+				(self.nav_state == VehicleNavState.EXITING		and v2_dist <= v1_dist)
+			):
 				return float("inf")
 			dist_to_v2	= math_utils.get_dist(self.pos, v2.pos) - CAR_LENGTH
 		v1_stop_dist	= self.get_stop_dist(	acc_brake = v1_acc_brake )

@@ -30,6 +30,7 @@ def get_dist_on_circle(angle1: float, angle2: float, radius: float = ROUNDABOUT_
 	"""
 	Note that the angle is calculated counter-clockwise, so the result is always the positive distance
 	from angle1 to angle2 (in modulo).  
+	
 	@param angle1: angle of the first point, in radians
 	@param angle2: angle of the second point, in radians
 	@param radius: radius of the circle, in meters
@@ -81,9 +82,6 @@ def get_dist_to_roundabout(pos: Position) -> float:
 	"""
 	dist_to_center		= get_dist(pos, ROUNDABOUT_POS)
 	dist_to_boundary	= dist_to_center - ROUNDABOUT_RADIUS
-
-	print(dist_to_center)
-	print(dist_to_boundary)
 
 	if dist_to_boundary <= 0:
 		# already inside

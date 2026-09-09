@@ -2,7 +2,9 @@ import math
 
 from common import roundabout
 from common import math_utils
-from common.const import CAR_LENGTH, CAR_WIDTH, ROAD_WIDTH, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
+from common.const import (
+	CAR_LENGTH, CAR_WIDTH, ROUNDABOUT_PERIMETER, ROUNDABOUT_POS, ROUNDABOUT_RADIUS, VEHICLE_SAFETY_MARGIN_M
+)
 from common.models.models import Position
 from common.models.vehicle import (
 	Vehicle, VehicleNavState, VehiclePosition
@@ -284,12 +286,17 @@ def vehicle_enters_first(
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 	v1_dist_to_conflict	= max(0.0, math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS)
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
-	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=0)
-	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=-CAR_LENGTH - safety_dist)
+	# v1 must also free the safety margin
+	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=CAR_LENGTH / 2 + safety_dist)
 
-	if not math.isfinite(v1_tta_conflict) or not math.isfinite(v2_tta_conflict) or v1_tta_conflict > v2_tta_conflict:
+	# v1 is stationary (v and a are 0) or if v2 has already passed the point
+	if not math.isfinite(v1_tta_conflict) or v2_dist_to_conflict >= ROUNDABOUT_PERIMETER / 2:
 		return None
-	
+
+	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=-CAR_LENGTH / 2)
+	# if v1 will take more than v2
+	if math.isfinite(v2_tta_conflict) and v1_tta_conflict > v2_tta_conflict:
+		return None
 	return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
 
 
@@ -317,12 +324,18 @@ def vehicle_enters_later(
 	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 	v1_dist_to_conflict	= max(0.0, math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS)
 	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
-	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=0)
-	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=CAR_LENGTH + safety_dist)
+	# if v1 wants to enter, it must free the margin's space and not remain stationary there
+	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=-CAR_LENGTH)
 
-	if not math.isfinite(v2_tta_conflict) or math.isfinite(v1_tta_conflict) or v2_tta_conflict > v1_tta_conflict:
+	if not math.isfinite(v1_tta_conflict):
 		return None
+	elif v2_dist_to_conflict >= ROUNDABOUT_PERIMETER / 2:
+		# if v2 has already passed the point
+		return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
 	
+	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=CAR_LENGTH + safety_dist)
+	if not math.isfinite(v2_tta_conflict) or v2_tta_conflict > v1_tta_conflict:
+		return None
 	return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
 
 
