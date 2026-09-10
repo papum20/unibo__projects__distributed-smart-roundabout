@@ -45,6 +45,8 @@ ghosts					: dict[str, Vehicle] = {}
 UPDATES_BEFORE_EXPIRY		= 3
 VISION_MATCH_TOLERANCE_M	= 5.0
 
+# min speed to keep inside roundabout: only go below for emergency or safety braking, not for e.g. yielding
+VEHICLE_INSIDE_SPEED_MIN_PERC	= 0.5
 
 
 
@@ -171,11 +173,13 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 				# If it's in failsafe, its exit data is reliable, otherwise
 				# it's just estimated as a worst-case scenario, so that it won't influence our decisions.
 				# - also try to stop if v2 has already occupied the conflict point
+				# - to avoid deadlocks, never really stop but just slow down (except for emergencies)
 				if should_yield_to(v1, v2) or v2.state != VehicleState.NORMAL or v2_dist_to_conflict <= CAR_LENGTH:
 
 					v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
 					v1_exit_angle		= roundabout.get_road_angle(v1.exit_road)
 					v1_dist_to_exit		= math_utils.get_dist_on_circle(v1.pos_angle, v1_exit_angle)
+					v1_in_min_speed		= VEHICLE_INSIDE_SPEED_MIN_PERC * v1.params.max_speed
 
 					# check if v1 exits earlier, or if too far
 					if v1_dist_to_exit <= v1_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2 or v1_dist_to_conflict >= ROUNDABOUT_PERIMETER / 2:
@@ -187,15 +191,15 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 
 					# dist required to stop safely
 					stop_dist = v1.get_stop_dist(v1.get_acc_brake()) + CAR_LENGTH + VEHICLE_SAFETY_MARGIN_M
-					# if already stopped before conflict and v2 hasn't passed yet, or if can stop safely
+					# if could stop safely
 					if (
-						(v1.speed == 0.0 and CAR_LENGTH < v2_dist_to_conflict <= CAR_LENGTH + VEHICLE_SAFETY_MARGIN_M) or
+						v1.speed > v1_in_min_speed and
 						stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
 					):
 						commands[v1.id].target_acceleration = min(new_acc, -v1.get_acc_brake())
 						continue
 
-					# in some cases, also try with hard brake
+					# in emergency cases, also try with hard brake
 					stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
 					if (
 						v2_dist_to_conflict <= CAR_LENGTH and
@@ -203,6 +207,9 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 					):
 						commands[v1.id].target_acceleration = min(new_acc, -v1.params.max_brake)
 						break
+
+					if v1.speed <= v1_in_min_speed:
+						continue
 
 					v1_acc_choices = [acc for acc in (new_acc, 0.0, -v1.get_acc_brake()) if acc <= new_acc]
 					for v1_acc in v1_acc_choices:

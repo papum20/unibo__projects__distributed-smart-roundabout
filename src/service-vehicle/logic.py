@@ -93,8 +93,8 @@ def vehicle_navigate_emergency(
 		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
 			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-			v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
-			v2_dist_to_conflict	= math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v1_dist_to_conflict	= math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
 
 			# stop if v2 has already occupied the conflict point
 			stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
