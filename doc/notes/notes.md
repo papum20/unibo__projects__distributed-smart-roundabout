@@ -1,7 +1,5 @@
 ## Report
 
-latex template: https://github.com/unibo-fc-isi-ds/template-final-report  
-
 ### Additional Learning Goals
 * integration tests (between softwares)
 
