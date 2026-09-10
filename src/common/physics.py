@@ -207,15 +207,23 @@ def vehicle_tta(v, dist: float, new_acc: float|None = None, margin: float = 0.0)
 			return math.inf
 		return d / v0
 
-	# distance to accelerate from v0 to vmax
-	d_acc = (vmax ** 2 - v0 ** 2) / (2.0 * acc)
+	if acc > 0:
+		# distance to accelerate from v0 to vmax
+		d_acc = (vmax ** 2 - v0 ** 2) / (2.0 * acc)
 
-	if d <= d_acc:
-		return (math.sqrt(v0 ** 2 + 2 * acc * d) - v0) / acc
+		if d <= d_acc:
+			return (math.sqrt(v0 ** 2 + 2 * acc * d) - v0) / acc
 
-	t_acc		= 		(vmax - v0)	/ acc
-	t_cruise	= max(	(d - d_acc)	/ vmax, 0.0)
-	return t_acc + t_cruise
+		t_acc		= 		(vmax - v0)	/ acc
+		t_cruise	= max(	(d - d_acc)	/ vmax, 0.0)
+		return t_acc + t_cruise
+	else:
+		# acc < 0 (braking)
+		d_stop = (v0 ** 2) / (2.0 * -acc)
+		if d >= d_stop:
+			return math.inf
+		# It will reach distance d before stopping completely
+		return (v0 - math.sqrt(max(0.0, v0 ** 2 + 2 * acc * d))) / -acc
 
 
 
@@ -337,6 +345,52 @@ def vehicle_enters_later(
 	if not math.isfinite(v2_tta_conflict) or v2_tta_conflict > v1_tta_conflict:
 		return None
 	return _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
+
+
+def vehicle_entry_conflict(
+	v1			: Vehicle,
+	v2			: Vehicle,
+	v1_acc		: float|None	= None,
+	v2_acc		: float|None	= None,
+	safety_dist	: float			= 0.0
+) -> tuple[float, tuple[Vehicle, Vehicle]] | None:
+	"""
+	If v1 is approaching and v2 is already in the the roundabout,
+	determine when they will reach the conflict point.
+
+	@param v1_acc : optional new acceleration for v1, otherwise use its current one.
+	@return :
+		(time_diff, (v1_predicted, v2_predicted)), with the time difference between
+		v1 and v2 at the conflict point (v1_tta - v2_tta). 0 if they arrive at the same time,
+		within a tolerance margin. None if none of them will arrive (both will stop before).
+	"""
+	if v1.nav_state != VehicleNavState.APPROACHING or v2.nav_state != VehicleNavState.IN_ROUNDABOUT:
+		return None
+
+	# times to get to conflict point are more conservative:
+	# they also take into account some margins, e.g. for the car size
+	conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+	v1_dist_to_conflict	= max(0.0, math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS)
+	v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
+	# if v1 wants to enter, it must free the margin's space and not remain stationary there
+	v1_tta_conflict		= vehicle_tta(v1, v1_dist_to_conflict, new_acc=v1_acc, margin=-CAR_LENGTH / 2 - CAR_WIDTH)
+	# v2 has to free the conflict point too
+	v2_tta_conflict		= vehicle_tta(v2, v2_dist_to_conflict, new_acc=v2_acc, margin=CAR_LENGTH)
+	
+	if not math.isfinite(v2_tta_conflict) and not math.isfinite(v1_tta_conflict):
+		return None
+	pred	= _vehicle_predict_conflict(v1, v2, v1_acc, v2_acc)
+	t_diff	= v1_tta_conflict - v2_tta_conflict
+	if pred is None:
+		return None
+	pred_v1, pred_v2 = pred
+	if min(
+		math_utils.get_dist_on_circle(pred_v1.pos_angle, pred_v2.pos_angle),
+		math_utils.get_dist_on_circle(pred_v2.pos_angle, pred_v1.pos_angle)
+	) < CAR_LENGTH + safety_dist:
+		# if they are too close, consider them as arriving at the same time
+		t_diff = 0.0
+	return t_diff, (pred_v1, pred_v2)
 
 
 

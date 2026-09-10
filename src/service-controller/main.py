@@ -45,6 +45,8 @@ ghosts					: dict[str, Vehicle] = {}
 UPDATES_BEFORE_EXPIRY		= 3
 VISION_MATCH_TOLERANCE_M	= 5.0
 
+# min speed to keep inside roundabout: only go below for emergency or safety braking, not for e.g. yielding
+VEHICLE_INSIDE_SPEED_MIN_PERC	= 0.5
 
 
 
@@ -171,11 +173,13 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 				# If it's in failsafe, its exit data is reliable, otherwise
 				# it's just estimated as a worst-case scenario, so that it won't influence our decisions.
 				# - also try to stop if v2 has already occupied the conflict point
+				# - to avoid deadlocks, never really stop but just slow down (except for emergencies)
 				if should_yield_to(v1, v2) or v2.state != VehicleState.NORMAL or v2_dist_to_conflict <= CAR_LENGTH:
 
 					v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
 					v1_exit_angle		= roundabout.get_road_angle(v1.exit_road)
 					v1_dist_to_exit		= math_utils.get_dist_on_circle(v1.pos_angle, v1_exit_angle)
+					v1_in_min_speed		= VEHICLE_INSIDE_SPEED_MIN_PERC * v1.params.max_speed
 
 					# check if v1 exits earlier, or if too far
 					if v1_dist_to_exit <= v1_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2 or v1_dist_to_conflict >= ROUNDABOUT_PERIMETER / 2:
@@ -187,15 +191,15 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 
 					# dist required to stop safely
 					stop_dist = v1.get_stop_dist(v1.get_acc_brake()) + CAR_LENGTH + VEHICLE_SAFETY_MARGIN_M
-					# if already stopped before conflict and v2 hasn't passed yet, or if can stop safely
+					# if could stop safely
 					if (
-						(v1.speed == 0.0 and CAR_LENGTH < v2_dist_to_conflict <= CAR_LENGTH + VEHICLE_SAFETY_MARGIN_M) or
+						v1.speed > v1_in_min_speed and
 						stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
 					):
 						commands[v1.id].target_acceleration = min(new_acc, -v1.get_acc_brake())
 						continue
 
-					# in some cases, also try with hard brake
+					# in emergency cases, also try with hard brake
 					stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
 					if (
 						v2_dist_to_conflict <= CAR_LENGTH and
@@ -204,18 +208,27 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 						commands[v1.id].target_acceleration = min(new_acc, -v1.params.max_brake)
 						break
 
-					v1_acc_choices = [acc for acc in (new_acc, 0.0, -v1.get_acc_brake()) if acc <= new_acc]
+					if v1.speed <= v1_in_min_speed:
+						continue
+
+					v1_acc_choices = sorted(
+						[acc for acc in (new_acc, 0.0, -v1.get_acc_brake()) if acc <= new_acc], reverse=True
+					)
 					for v1_acc in v1_acc_choices:
-						predicted = physics.vehicle_enters_first( v2, v1, v1_acc=v2_curr_acc, v2_acc=v1_acc )
-						if predicted is not None:
-							pred_v2, pred_v1	= predicted
-							# check safety of v1 behind v2
-							pred_cmd			= vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()])
-							# if possible, look for a choice which avoids hard braking;
-							# as a fallback, look for any safe option
-							if pred_cmd is not None and pred_cmd.target_acceleration >= -v1.get_acc_brake():
+						pred = physics.vehicle_entry_conflict( v2, v1, v1_acc=v2_curr_acc, v2_acc=v1_acc )
+						if pred is None:
+							# they're both still, no difference.
+							# a lower acc wont change this.
+							break
+						t_diff, (pred_v1, pred_v2) = pred
+						if t_diff < 0:
+							# v2 enters first.
+							# look for a choice which avoids hard braking
+							pred_cmd = vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()])
+							if pred_cmd is not None:
 								commands[v1.id].target_acceleration = v1_acc
 								break
+						# if v1 enters later, we don't care here
 					# if can't stop safely, just pass: the approaching v2,
 					# either guided by controller or failsafe mode, will brake
 
@@ -253,34 +266,39 @@ def evaluate(vehicles: list[Vehicle]) -> dict[str, Command]:
 
 				# coordinate with v2
 
-				if vehicle_enters_later_safely(v1, v2, new_acc, v_in_acc=v2_curr_acc):
-					continue
-
-				# if possible, go faster
-				predicted = physics.vehicle_enters_first(v1, v2, v1_acc=new_acc, v2_acc=v2_curr_acc)
-				if predicted is not None:
-					pred_v1, pred_v2	= predicted
-					# check safety of v2 behind v1
-					pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()])
-					# for simplicity, we allow hard braking here
-					if pred_cmd is not None:
-						continue
-				# if v1 can't enter first safely at max acc, neither can it do at a lower one
-
 				# if still far from roundabout, no need to brake
 				v1_dist_to_entry = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS - ROAD_WIDTH - CAR_LENGTH / 2
 				if v1_dist_to_entry - v1.get_stop_dist(acc_brake=v1.get_acc_brake()) - v1.get_reaction_time_dist() > 0: # ROUNDABOUT_PROXIMITY_DIST:
 					# as long as you can start braking later, no need to already do it now
 					continue
 
-				v1_acc_choices		= [acc for acc in (0.0, -v1.get_acc_brake(), -v1.params.max_brake) if acc < new_acc]
+				v1_acc_choices = sorted(
+					[acc for acc in (new_acc, 0.0, -v1.get_acc_brake(), -v1.params.max_brake) if acc <= new_acc], reverse=True
+				)
 				for v1_acc in v1_acc_choices:
-					if vehicle_enters_later_safely(v1, v2, v1_acc, v_in_acc=v2_curr_acc):
-						commands[v1.id].target_acceleration = v1_acc
+					pred = physics.vehicle_entry_conflict(v1, v2, v1_acc=v1_acc, v2_acc=v2_curr_acc)
+					if pred is None:
+						# already checked for stops before, so let pass.
+						# a lower acc wont change this.
+						commands[v1.id].target_acceleration = -v1.params.max_brake
 						break
+					t_diff, (pred_v1, pred_v2) = pred
+					if t_diff > 0:
+						# v1 enters later, check if it can do it safely
+						pred_cmd = vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()])
+						# for simplicity, we allow hard braking here
+						if pred_cmd is not None:
+							commands[v1.id].target_acceleration = v1_acc
+							break
+					elif t_diff < 0:
+						pred_cmd = vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()])
+						if pred_cmd is not None:
+							commands[v1.id].target_acceleration = v1_acc
+							break
 				else:
 					# no safe option: wait for v2 to pass
 					commands[v1.id].target_acceleration = -v1.params.max_brake
+					break
 
 	return commands
 

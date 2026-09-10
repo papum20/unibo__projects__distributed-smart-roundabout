@@ -93,8 +93,8 @@ def vehicle_navigate_emergency(
 		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
 			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-			v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
-			v2_dist_to_conflict	= math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v1_dist_to_conflict	= math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
 
 			# stop if v2 has already occupied the conflict point
 			stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
@@ -159,15 +159,26 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 
 				v2 = vehicle.vehicle_from_pos(v2_pos)
 				# use acc max, to be safe 
-				predicted = physics.vehicle_enters_first(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
-				if predicted is not None:
-					pred_v1, pred_v2	= predicted
-					# check safety of v2 behind v1.
+				pred = physics.vehicle_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
+				if pred is None:
+					# let pass.
+					# a lower acc wont change this.
+					new_acc = -v1.params.max_brake
+					break
+				t_diff, (pred_v1, pred_v2) = pred
+				if t_diff > 0:
+					# v1 enters later, check if it can do it safely.
 					# double reaction time, for double latency of communicating with controller forth and back
-					pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
+					pred_cmd = vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()], v2.get_reaction_time_dist())
+					# for simplicity, we allow hard braking here
+					if pred_cmd is not None:
+						continue
+				elif t_diff < 0:
+					pred_cmd = vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
 					if pred_cmd is not None:
 						continue
 				else:
+					# unsafe
 					new_acc = -v1.params.max_brake
 					break
 

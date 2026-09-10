@@ -6,7 +6,7 @@ import aiomqtt
 
 from common import math_utils, physics
 from common.const import (
-	AREA_RADIUS, CAR_LENGTH, COLLISION_COOLDOWN_S, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROUNDABOUT_POS
+	AREA_RADIUS, CAR_LENGTH, COLLISION_COOLDOWN_S, ROUNDABOUT_RADIUS, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROUNDABOUT_POS
 )
 from common.get_env import config
 from common.models.vehicle import Vehicle, VehicleCollision, VehicleNavState
@@ -20,6 +20,28 @@ vehicles_state:		dict[str, Vehicle] = {}
 vehicle_timestamps: dict[str, float] = {}
 
 collision_last_emitted: dict[tuple[str, str], float] = {}
+
+
+
+def is_collision_while_exiting(v1: Vehicle, v_in: Vehicle):
+	"""
+	@param v1 : any vehicle
+	@param v_in : a vehicle inside the roundabout
+
+	@return : True if this is a collision with one of the two vehicles entering
+	and the other exiting
+	"""
+	v2_close_to_exit = v_in.get_dist_to_exit() <= CAR_LENGTH
+	if v1.nav_state == VehicleNavState.IN_ROUNDABOUT:
+		v1_just_entered	= v1.get_dist_from_entry() <= CAR_LENGTH
+		return v1_just_entered and v2_close_to_exit
+	elif v1.nav_state == VehicleNavState.APPROACHING:
+		v1_close_to_entry = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS <= CAR_LENGTH
+		return v1_close_to_entry and v2_close_to_exit
+	elif v1.nav_state == VehicleNavState.EXITING:
+		v1_close_to_exit = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS <= CAR_LENGTH
+		return v1_close_to_exit and v2_close_to_exit
+
 
 
 async def loop_listen_positions(client: aiomqtt.Client):
@@ -86,16 +108,10 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 
 				# ignore collisions when one is exiting and the other entering,
 				# since it's a simulation representation's problem
-				v1_close_to_exit	= v1.get_dist_to_exit() <= CAR_LENGTH
-				v2_close_to_exit	= v2.get_dist_to_exit() <= CAR_LENGTH
-				v1_just_entered		= v1.angle_traveled <= CAR_LENGTH
-				v2_just_entered		= v2.angle_traveled <= CAR_LENGTH
 				if (
-					v1.nav_state == VehicleNavState.IN_ROUNDABOUT and
-					v2.nav_state == VehicleNavState.IN_ROUNDABOUT and (
-						(v1_close_to_exit and v2_just_entered) or
-						(v2_close_to_exit and v1_just_entered)
-				)):
+					(v1.nav_state == VehicleNavState.IN_ROUNDABOUT and is_collision_while_exiting(v2, v1)) or
+					(v2.nav_state == VehicleNavState.IN_ROUNDABOUT and is_collision_while_exiting(v1, v2))
+				):
 					continue
 
 				if physics.vehicle_collide(v1_pos, v2_pos):

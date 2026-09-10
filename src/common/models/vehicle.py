@@ -101,6 +101,15 @@ class Vehicle(BaseModel):
 		"""
 		return self.params.max_brake * 0.5
 
+	def get_dist_from_entry(self) -> float:
+		"""
+		@return: distance from the entry road, while inside the roundabout; inf if not inside
+		"""
+		if self.nav_state != VehicleNavState.IN_ROUNDABOUT:
+			return float("inf")
+		entry_angle = roundabout.get_road_angle(self.entry_road)
+		return math_utils.get_dist_on_circle(entry_angle, self.pos_angle)
+
 	def get_dist_to_exit(self) -> float:
 		"""
 		@return: distance to the exit road, while inside the roundabout; inf if not inside
