@@ -3,7 +3,9 @@ import random
 
 from common import math_utils, physics, roundabout, vehicle
 from common.const import (
+	CAR_LENGTH,
 	ROAD_WIDTH,
+	ROUNDABOUT_PERIMETER,
 	ROUNDABOUT_PROXIMITY_DIST,
 	LANE_WIDTH,
 	ROAD_LENGTH,
@@ -66,8 +68,43 @@ def vehicle_navigate_spawn(
 	return None
 
 
+def vehicle_navigate_emergency(
+	v1			: Vehicle,
+	v_others	: list[VehiclePosition],
+) -> Command | None:
+	"""
+	Do basic safety checks:
+	- with hard brakes (so they can pass over controller's instructions).
+	- at spawn point
 
+	@return : a Command if necessary for emergency, otherwise None
+	"""
+	spawn_cmd = vehicle_navigate_spawn(v1, v_others)
+	if spawn_cmd is not None:
+		return spawn_cmd
+	
+	# hard check for tail-gating
+	safe_cmd = vehicle.evaluate_safely(v1, v_others)
+	if safe_cmd is None or safe_cmd.target_acceleration == -v1.params.max_brake:
+		return Command(target_acceleration=-v1.params.max_brake)
 
+	for v2_pos in v_others:
+		# entrance
+		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
+
+			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+			v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
+			v2_dist_to_conflict	= math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+
+			# stop if v2 has already occupied the conflict point
+			stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
+			if (
+				v2_dist_to_conflict <= CAR_LENGTH and
+				stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
+			):
+				return Command(target_acceleration=-v1.params.max_brake)
+
+	return None
 
 
 
@@ -103,15 +140,15 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 		# entrance
 		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
+			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
+			v2_dist_to_conflict = math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
+
 			# avoid deadlocks if v2 has stopped
-			if v2_pos.speed == 0.0:
+			if v2_pos.speed == 0.0 and CAR_LENGTH <= v2_dist_to_conflict < ROUNDABOUT_PERIMETER / 2:
 				continue
 			
 			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
-			
 			if v1_dist_to_conflict < ROUNDABOUT_PROXIMITY_DIST + ROAD_WIDTH:
-				conflict_angle		= roundabout.get_road_angle(v1.entry_road)
-				v2_dist_to_conflict = math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
 				
 				# most cautios safety distance
 				#if v2_dist_to_conflict <= (

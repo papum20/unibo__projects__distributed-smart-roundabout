@@ -4,10 +4,12 @@ import logging
 import time
 import aiomqtt
 
-from common import math_utils, physics, roundabout
-from common.const import AREA_RADIUS, CAR_LENGTH, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROUNDABOUT_POS, VEHICLE_DIST_TOL
+from common import math_utils, physics
+from common.const import (
+	AREA_RADIUS, CAR_LENGTH, COLLISION_COOLDOWN_S, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROUNDABOUT_POS
+)
 from common.get_env import config
-from common.models.vehicle import Vehicle, VehicleCollision, VehicleNavState, VehiclePosition
+from common.models.vehicle import Vehicle, VehicleCollision, VehicleNavState
 
 
 
@@ -16,6 +18,8 @@ logger = logging.getLogger(__name__)
 # v_id -> (VehiclePosition, timestamp)
 vehicles_state:		dict[str, Vehicle] = {}
 vehicle_timestamps: dict[str, float] = {}
+
+collision_last_emitted: dict[tuple[str, str], float] = {}
 
 
 async def loop_listen_positions(client: aiomqtt.Client):
@@ -59,6 +63,13 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 				continue
 			
 			for v2_id, v2 in vehicles_state.items():
+
+				collision_pair: tuple[str, str] = tuple(sorted((v1_id, v2_id)))	# type: ignore
+				last_collision = collision_last_emitted.get(collision_pair, 0.0)
+
+				if current_time - last_collision < COLLISION_COOLDOWN_S:
+					continue
+
 				v2_t = vehicle_timestamps[v2_id]
 				if v2_t and current_time - v2_t > TIMER_NETWORK_TIMEOUT:
 					continue
@@ -75,15 +86,13 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 
 				# ignore collisions when one is exiting and the other entering,
 				# since it's a simulation representation's problem
-				v1_exit_angle = roundabout.get_road_angle(v1.exit_road)
-				v2_exit_angle = roundabout.get_road_angle(v2.exit_road)
-				v1_close_to_exit = math_utils.get_dist_on_circle(v1.pos_angle, v1_exit_angle) <= CAR_LENGTH / 2
-				v2_close_to_exit = math_utils.get_dist_on_circle(v2.pos_angle, v2_exit_angle) <= CAR_LENGTH / 2
-				v1_just_entered = v1.angle_traveled <= CAR_LENGTH / 2
-				v2_just_entered = v2.angle_traveled <= CAR_LENGTH / 2
+				v1_close_to_exit	= v1.get_dist_to_exit() <= CAR_LENGTH
+				v2_close_to_exit	= v2.get_dist_to_exit() <= CAR_LENGTH
+				v1_just_entered		= v1.angle_traveled <= CAR_LENGTH
+				v2_just_entered		= v2.angle_traveled <= CAR_LENGTH
 				if (
-					v1.nav_state == VehicleNavState.IN_ROUNDABOUT
-					and v2.nav_state == VehicleNavState.IN_ROUNDABOUT and (
+					v1.nav_state == VehicleNavState.IN_ROUNDABOUT and
+					v2.nav_state == VehicleNavState.IN_ROUNDABOUT and (
 						(v1_close_to_exit and v2_just_entered) or
 						(v2_close_to_exit and v1_just_entered)
 				)):
@@ -95,6 +104,7 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 						v2_id=v2_id,
 						timestamp=current_time
 					).model_dump())
+					collision_last_emitted[collision_pair] = current_time
 		
 		if collisions:
 			for collision in collisions:

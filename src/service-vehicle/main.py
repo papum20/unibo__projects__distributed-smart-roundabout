@@ -25,7 +25,7 @@ from common.models.vehicle import (
 from common.vehicle import vehicle_navigate
 from .logic import (
 	evaluate_failsafe,
-	vehicle_navigate_spawn,
+	vehicle_navigate_emergency,
 	vehicle_reset
 )
 
@@ -80,23 +80,37 @@ async def loop_listen_commands(client, s: RuntimeState = state):
 		if str(message.topic) in (sysctrl_topic, sysctrl_broadcast_topic):
 			command = SystemCommand(**payload)
 			if command.command == SystemCommandValue.PAUSE:
-				s.sysctrl_pause = True
+				s.sysctrl_disconnected	= False
+				s.sysctrl_failsafe		= False
+				s.sysctrl_pause			= True
 				logger.info("SysCtrl: Simulation PAUSED")
 			elif command.command == SystemCommandValue.RESUME:
-				s.sysctrl_pause = False
-				s.last_net_update_time = time.time()	# prevent instant failsafe
+				s.sysctrl_disconnected	= False
+				s.sysctrl_failsafe		= False
+				s.sysctrl_pause			= False
+				s.last_net_update_time	= time.time()	# prevent instant failsafe
 				logger.info("SysCtrl: Simulation RESUMED")
 			elif command.command == SystemCommandValue.ENTER_FAILSAFE:
-				s.sysctrl_failsafe = True
+				s.sysctrl_disconnected	= False
+				s.sysctrl_failsafe		= True
+				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER FAILSAFE")
 			elif command.command == SystemCommandValue.EXIT_FAILSAFE:
-				s.sysctrl_failsafe = False
+				s.sysctrl_failsafe		= False
+				s.sysctrl_disconnected	= False
+				s.sysctrl_pause			= False
+				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT FAILSAFE")
 			elif command.command == SystemCommandValue.ENTER_DISCONNECTED:
-				s.sysctrl_disconnected = True
+				s.sysctrl_failsafe		= False
+				s.sysctrl_disconnected	= True
+				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER DISCONNECTED")
 			elif command.command == SystemCommandValue.EXIT_DISCONNECTED:
-				s.sysctrl_disconnected = False
+				s.sysctrl_failsafe		= False
+				s.sysctrl_disconnected	= False
+				s.sysctrl_pause			= False
+				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT DISCONNECTED")
 
 		elif message.topic.matches(positions_topic):
@@ -155,9 +169,10 @@ async def loop_physics(client, s: RuntimeState = state):
 			await asyncio.sleep(1.0 / UPDATES_P_S_VEHICLE)
 			continue
 
-		spawn_command = vehicle_navigate_spawn(s.vehicle, list(s.local_vision_vehicles.values()))
-		if spawn_command is not None:
-			active_command	= spawn_command
+		cmd_emergency = vehicle_navigate_emergency(s.vehicle, list(s.local_vision_vehicles.values()))
+		if cmd_emergency is not None:
+			active_command	= cmd_emergency
+			s.vehicle.state	= VehicleState.FAILSAFE
 
 		else:
 			# check for command, otherwise failsafe

@@ -4,7 +4,7 @@ import math
 from pydantic import BaseModel
 
 from common import math_utils, roundabout
-from common.const import CAR_LENGTH, ROUNDABOUT_POS, VEHICLE_ANGLE_TOL_RAD, VEHICLE_REACTION_TIME_S
+from common.const import CAR_LENGTH, ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, VEHICLE_ANGLE_TOL_RAD, VEHICLE_REACTION_TIME_S
 from common.models.models import Position
 
 
@@ -101,6 +101,15 @@ class Vehicle(BaseModel):
 		"""
 		return self.params.max_brake * 0.5
 
+	def get_dist_to_exit(self) -> float:
+		"""
+		@return: distance to the exit road, while inside the roundabout; inf if not inside
+		"""
+		if self.nav_state != VehicleNavState.IN_ROUNDABOUT:
+			return float("inf")
+		exit_angle = roundabout.get_road_angle(self.exit_road)
+		return math_utils.get_dist_on_circle(self.pos_angle, exit_angle)
+
 
 	def get_reaction_time_dist(self) -> float:
 		"""
@@ -130,6 +139,21 @@ class Vehicle(BaseModel):
 		acc_brake = acc_brake if acc_brake is not None else self.params.max_brake
 		return self.to_pos().get_stop_dist(acc_brake = acc_brake)
 
+
+	def has_passed_road(self, road: int) -> bool:
+		"""
+		@return : True if the vehicle has passed road intersection (while inside the roundabout)
+		"""
+		if self.nav_state != VehicleNavState.IN_ROUNDABOUT:
+			return False
+		angle_diff = (self.pos_angle - roundabout.get_road_angle(road)) % (2 * math.pi)
+		return self.angle_traveled >= angle_diff
+
+	def is_exiting_next(self) -> bool:
+		"""
+		@return : True if the vehicle is exiting at the next road
+		"""
+		return self.get_dist_to_exit() < 2 * math.pi / ROUNDABOUT_N_ROADS
 
 	def is_on_same_road(self, v2: VehiclePosition) -> bool:
 		"""
