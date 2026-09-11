@@ -16,7 +16,7 @@ from common.const import (
 	VEHICLE_SPEED_TOL_PERC
 )
 from common.models.models import (
-	Command, Position
+	Command
 )
 from common.models.vehicle import (
 	VEHICLE_FAILSAFE_MAX_SPEED_M_S,
@@ -50,7 +50,7 @@ def vehicle_navigate_spawn(
 			continue
 
 		v2_dist = math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS)
-		if not physics.vehicle_collide(v_pos, v2_pos):
+		if not vehicle.v_collide(v_pos, v2_pos):
 			if v2_dist < v_dist:
 				front_v2_pos	= v2_pos
 				front_gap		= min(front_gap, v_dist - v2_dist)
@@ -159,7 +159,7 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 
 				v2 = vehicle.vehicle_from_pos(v2_pos)
 				# use acc max, to be safe 
-				pred = physics.vehicle_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
+				pred = vehicle.v_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
 				if pred is None:
 					# let pass.
 					# a lower acc wont change this.
@@ -175,7 +175,7 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 						continue
 				elif t_diff < 0:
 					pred_cmd = vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
-					if pred_cmd is not None:
+					if pred_cmd is not None or v2.speed == 0.0:
 						continue
 				else:
 					# unsafe
@@ -194,9 +194,7 @@ def vehicle_reset(v: Vehicle, n_roads: int=ROUNDABOUT_N_ROADS):
 	# Random distance between 50 and 80 meters away from the roundabout.
 	# Spawn on right lane.
 	spawn_dist	= random.uniform(ROAD_LENGTH * 0.9, ROAD_LENGTH) 
-	start_x, start_y = roundabout.get_point_on_road(road_entry, spawn_dist, n_roads=n_roads, lane_offset=LANE_WIDTH/2)
-	
-	v.pos			= Position(x=start_x, y=start_y)
+	v.pos			= roundabout.get_point_on_road(road_entry, ROAD_WIDTH + spawn_dist, n_roads=n_roads, lane_offset=LANE_WIDTH/2)
 	v.pos_angle		= roundabout.get_road_angle(road_entry, n_roads=n_roads)
 	v.speed			= random.uniform(8.0, 12.0) # Random starting speed
 	v.state			= VehicleState.NORMAL

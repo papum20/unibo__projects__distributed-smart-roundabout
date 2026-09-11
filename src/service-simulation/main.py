@@ -4,7 +4,7 @@ import logging
 import time
 import aiomqtt
 
-from common import math_utils, physics
+from common import math_utils, vehicle
 from common.const import (
 	AREA_RADIUS, CAR_LENGTH, COLLISION_COOLDOWN_S, ROUNDABOUT_RADIUS, TIMER_NETWORK_TIMEOUT, UPDATES_P_S_CONTROLLER, ROUNDABOUT_POS
 )
@@ -114,7 +114,7 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 				):
 					continue
 
-				if physics.vehicle_collide(v1_pos, v2_pos):
+				if vehicle.v_collide(v1_pos, v2_pos):
 					collisions.append(VehicleCollision(
 						v1_id=v1_id,
 						v2_id=v2_id,

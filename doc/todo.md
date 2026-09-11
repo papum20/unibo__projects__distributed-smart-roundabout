@@ -12,4 +12,6 @@ test:
   * show cars throughput w w/o controller coordination (need autonomous cars)
   * total summed time halted
 
+* disconnected eg 30/40, but even w 5/40, normal ones block for a long time
+
 commit:

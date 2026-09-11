@@ -1,7 +1,7 @@
 import math
 
 from common.models.models import Position
-from common.physics import update_speed, move_towards, move_on_circle
+from common.physics import update_speed, v_move_towards, move_on_circle
 
 
 
@@ -17,7 +17,7 @@ def test_update_speed():
 def test_move_towards():
     pos		= Position(x=0.0, y=0.0)
     target	= Position(x=10.0, y=0.0)
-    new_pos = move_towards(pos, target, speed=2.0, dt=1.0)
+    new_pos = v_move_towards(pos, target, speed=2.0, dt=1.0)
     assert new_pos.x == 2.0
     assert new_pos.y == 0.0
 
