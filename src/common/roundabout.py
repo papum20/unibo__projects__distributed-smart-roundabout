@@ -1,40 +1,49 @@
 import math
 
-from common.const import ROAD_WIDTH, ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS
+from common.const import ROUNDABOUT_N_ROADS, ROUNDABOUT_POS, ROUNDABOUT_RADIUS
 from common.models.models import Position
 
 
 
-def get_road_angle(road_index: int, n_roads: int = ROUNDABOUT_N_ROADS) -> float:
+def get_next_road(
+	angle	: float,
+	n_roads	: int	= ROUNDABOUT_N_ROADS
+) -> int:
+	"""
+	@param angle: angle in radians (0 is East, pi/2 is North)
+	@return: the index of the next road (0..n_roads-1) in counter-clockwise order
+	"""
+	road_angle = (2 * math.pi / n_roads)
+	return int((angle + road_angle) // road_angle) % n_roads
+
+
+def get_road_angle(
+    road_index	: int,
+    n_roads		: int	= ROUNDABOUT_N_ROADS,
+    lane_offset	: float = 0.0,
+) -> float:
 	"""
 	@return the angle of the road in radians (0 is East, pi/2 is North)
 	"""
-	return (2 * math.pi / n_roads) * road_index
+	road_angle = (2 * math.pi / n_roads) * road_index
+	# arc tangent (i.e. angle corresponding to tangent)
+	return road_angle + math.atan2(lane_offset, ROUNDABOUT_RADIUS)
 
-
-def get_entry(road_index: int, n_roads: int = ROUNDABOUT_N_ROADS) -> Position:
-	"""
-	@return the position of the road's entry in the roundabout
-	"""
-	angle = get_road_angle(road_index, n_roads)
-	return Position(
-		x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS * math.cos(angle),
-		y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS * math.sin(angle),
-	)
-	
 
 def get_point_on_road(
 	road_index				: int,
-	distance_from_boundary	: float,
+	dist_from_roundabout	: float	= 0.0,
 	n_roads					: int	= ROUNDABOUT_N_ROADS,
 	lane_offset				: float	= 0.0
-) -> tuple[float, float]:
+) -> Position:
 	"""
+	@param dist_from_roundabout: distance from the roundabout, i.e. minus its radius. Remember to add ROAD_WIDTH, in case.
 	@return the (x, y) coordinates on a specific road at a given distance from the roundabout line.
 	"""
+	# no lane offset, the angle of the road is the same for both lanes
 	angle = get_road_angle(road_index, n_roads)
 	# total distance from the absolute center (0,0)
-	total_dist = ROUNDABOUT_RADIUS + ROAD_WIDTH + distance_from_boundary
+	total_dist = ROUNDABOUT_RADIUS + dist_from_roundabout
 
 	# center of the road
 	cx = ROUNDABOUT_POS.x + total_dist * math.cos(angle)
@@ -43,4 +52,4 @@ def get_point_on_road(
 	# offset perpendicularly to create lanes
 	px = cx - lane_offset * math.sin(angle)
 	py = cy + lane_offset * math.cos(angle)
-	return px, py
+	return Position(x=px, y=py)

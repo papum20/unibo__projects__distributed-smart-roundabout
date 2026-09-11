@@ -1,7 +1,7 @@
 import logging
 import random
 
-from common import math_utils, physics, roundabout, vehicle
+from common import math_utils, roundabout, vehicle
 from common.const import (
 	CAR_LENGTH,
 	ROAD_WIDTH,
@@ -16,7 +16,7 @@ from common.const import (
 	VEHICLE_SPEED_TOL_PERC
 )
 from common.models.models import (
-	Command, Position
+	Command
 )
 from common.models.vehicle import (
 	VEHICLE_FAILSAFE_MAX_SPEED_M_S,
@@ -50,7 +50,7 @@ def vehicle_navigate_spawn(
 			continue
 
 		v2_dist = math_utils.get_dist(v2_pos.pos, ROUNDABOUT_POS)
-		if not physics.vehicle_collide(v_pos, v2_pos):
+		if not vehicle.v_collide(v_pos, v2_pos):
 			if v2_dist < v_dist:
 				front_v2_pos	= v2_pos
 				front_gap		= min(front_gap, v_dist - v2_dist)
@@ -89,6 +89,22 @@ def vehicle_navigate_emergency(
 		return Command(target_acceleration=-v1.params.max_brake)
 
 	for v2_pos in v_others:
+
+		if v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2_pos.nav_state == VehicleNavState.APPROACHING:
+
+			next_road			= roundabout.get_next_road(v1.pos_angle)
+			conflict_angle		= roundabout.get_road_angle(next_road)
+			v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
+			v2_dist_to_conflict	= math_utils.get_dist_to_roundabout(v2_pos.pos)
+
+			# try to stop if v2 has already occupied the conflict point, with hard brake
+			stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
+			if (
+				v2_dist_to_conflict <= ROAD_WIDTH - CAR_LENGTH/2 and
+				stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
+			):
+				return Command(target_acceleration=-v1.params.max_brake)
+		
 		# entrance
 		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
@@ -137,8 +153,12 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 		new_acc = min(new_acc, 0.0)
 
 	for v2_pos in v_others:
+
+		if v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2_pos.nav_state == VehicleNavState.APPROACHING:
+			pass
+
 		# entrance
-		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
+		elif v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
 			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 			v2_dist_to_conflict = math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
@@ -147,7 +167,7 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 			if v2_pos.speed == 0.0 and CAR_LENGTH <= v2_dist_to_conflict < ROUNDABOUT_PERIMETER / 2:
 				continue
 			
-			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v1_dist_to_conflict = math_utils.get_dist_to_roundabout(v1.pos)
 			if v1_dist_to_conflict < ROUNDABOUT_PROXIMITY_DIST + ROAD_WIDTH:
 				
 				# most cautios safety distance
@@ -158,16 +178,28 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 				#	break
 
 				v2 = vehicle.vehicle_from_pos(v2_pos)
-				# use acc max, to be safe 
-				predicted = physics.vehicle_enters_first(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
-				if predicted is not None:
-					pred_v1, pred_v2	= predicted
-					# check safety of v2 behind v1.
+				# use acc 0, since there will be little delay, without need for network.
+				# not knowing it, both positive and negative would create some problem (depending on who's on front)
+				pred = vehicle.v_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=0.0)
+				if pred is None:
+					# let pass.
+					# a lower acc wont change this.
+					new_acc = -v1.params.max_brake
+					break
+				t_diff, (pred_v1, pred_v2) = pred
+				if t_diff > 0:
+					# v1 enters later, check if it can do it safely.
 					# double reaction time, for double latency of communicating with controller forth and back
-					pred_cmd			= vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
+					pred_cmd = vehicle.evaluate_safely(pred_v1, [pred_v2.to_pos()], v2.get_reaction_time_dist())
+					# for simplicity, we allow hard braking here
 					if pred_cmd is not None:
 						continue
+				elif t_diff < 0:
+					pred_cmd = vehicle.evaluate_safely(pred_v2, [pred_v1.to_pos()], v2.get_reaction_time_dist())
+					if pred_cmd is not None or v2.speed == 0.0:
+						continue
 				else:
+					# unsafe
 					new_acc = -v1.params.max_brake
 					break
 
@@ -183,9 +215,7 @@ def vehicle_reset(v: Vehicle, n_roads: int=ROUNDABOUT_N_ROADS):
 	# Random distance between 50 and 80 meters away from the roundabout.
 	# Spawn on right lane.
 	spawn_dist	= random.uniform(ROAD_LENGTH * 0.9, ROAD_LENGTH) 
-	start_x, start_y = roundabout.get_point_on_road(road_entry, spawn_dist, n_roads=n_roads, lane_offset=LANE_WIDTH/2)
-	
-	v.pos			= Position(x=start_x, y=start_y)
+	v.pos			= roundabout.get_point_on_road(road_entry, ROAD_WIDTH + spawn_dist, n_roads=n_roads, lane_offset=LANE_WIDTH/2)
 	v.pos_angle		= roundabout.get_road_angle(road_entry, n_roads=n_roads)
 	v.speed			= random.uniform(8.0, 12.0) # Random starting speed
 	v.state			= VehicleState.NORMAL

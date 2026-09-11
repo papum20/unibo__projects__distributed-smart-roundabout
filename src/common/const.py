@@ -9,7 +9,9 @@ UPDATES_P_S_VEHICLE		= 10.0
 UPDATES_P_S_CONTROLLER	= 10.0
 
 # time for a network timeout, or to consider data stale
-TIMER_NETWORK_TIMEOUT	= 0.5	# s
+TIMER_NETWORK_TIMEOUT		= 0.5	# s
+# order to accelerate, if all vehicles inside have remained stationary for this duration
+TIMER_CONTROLLER_DEADLOCK	= 2.0
 
 # visualization area
 AREA_RADIUS	= 150.0

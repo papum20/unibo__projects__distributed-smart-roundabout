@@ -7,7 +7,7 @@ import time
 import aiomqtt
 from uuid import uuid4
 
-from common import math_utils, physics
+from common import math_utils
 from common.const import (
 	CAR_VISION_RADIUS_M,
 	TIMER_NETWORK_TIMEOUT,
@@ -22,7 +22,7 @@ from common.models.models import (
 from common.models.vehicle import (
 	Vehicle, VehicleNavState, VehiclePosition, VehicleState, 
 )
-from common.vehicle import vehicle_navigate
+from common.vehicle import v_navigate
 from .logic import (
 	evaluate_failsafe,
 	vehicle_navigate_emergency,
@@ -80,36 +80,28 @@ async def loop_listen_commands(client, s: RuntimeState = state):
 		if str(message.topic) in (sysctrl_topic, sysctrl_broadcast_topic):
 			command = SystemCommand(**payload)
 			if command.command == SystemCommandValue.PAUSE:
-				s.sysctrl_disconnected	= False
-				s.sysctrl_failsafe		= False
 				s.sysctrl_pause			= True
 				logger.info("SysCtrl: Simulation PAUSED")
 			elif command.command == SystemCommandValue.RESUME:
-				s.sysctrl_disconnected	= False
-				s.sysctrl_failsafe		= False
 				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()	# prevent instant failsafe
 				logger.info("SysCtrl: Simulation RESUMED")
 			elif command.command == SystemCommandValue.ENTER_FAILSAFE:
 				s.sysctrl_disconnected	= False
 				s.sysctrl_failsafe		= True
-				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER FAILSAFE")
 			elif command.command == SystemCommandValue.EXIT_FAILSAFE:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= False
-				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT FAILSAFE")
 			elif command.command == SystemCommandValue.ENTER_DISCONNECTED:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= True
-				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER DISCONNECTED")
 			elif command.command == SystemCommandValue.EXIT_DISCONNECTED:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= False
-				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT DISCONNECTED")
 
@@ -188,14 +180,8 @@ async def loop_physics(client, s: RuntimeState = state):
 				s.vehicle.state	= VehicleState.NORMAL
 				active_command	= s.last_command
 
-		s.vehicle.acceleration = active_command.target_acceleration
-		s.vehicle.speed = physics.update_speed(
-			speed		= s.vehicle.speed, 
-			acc			= s.vehicle.acceleration, 
-			dt			= dt, 
-			max_speed	= s.vehicle.params.max_speed
-		)
-		s.vehicle = vehicle_navigate(s.vehicle, dt, logger=logger)
+		s.vehicle.acceleration	= active_command.target_acceleration
+		s.vehicle				= v_navigate(s.vehicle, dt, logger=logger)
 
 		if s.vehicle.nav_state == VehicleNavState.EXITING and math_utils.get_dist(s.vehicle.pos, ROUNDABOUT_POS) > AREA_RADIUS:
 			vehicle_reset(s.vehicle)
