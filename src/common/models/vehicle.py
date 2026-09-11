@@ -35,9 +35,11 @@ class VehicleParams(BaseModel):
 
 
 class VehicleCollision(BaseModel):
-	v1_id		: str
-	v2_id		: str
-	timestamp	: float
+	v1_id			: str
+	v2_id			: str
+	timestamp		: float
+	v1_nav_state	: VehicleNavState
+	v2_nav_state	: VehicleNavState
 
 
 

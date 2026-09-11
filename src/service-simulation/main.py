@@ -118,7 +118,9 @@ async def loop_publish_collisions(client: aiomqtt.Client):
 					collisions.append(VehicleCollision(
 						v1_id=v1_id,
 						v2_id=v2_id,
-						timestamp=current_time
+						timestamp=current_time,
+						v1_nav_state=v1.nav_state,
+						v2_nav_state=v2.nav_state
 					).model_dump())
 					collision_last_emitted[collision_pair] = current_time
 		

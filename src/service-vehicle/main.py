@@ -80,36 +80,28 @@ async def loop_listen_commands(client, s: RuntimeState = state):
 		if str(message.topic) in (sysctrl_topic, sysctrl_broadcast_topic):
 			command = SystemCommand(**payload)
 			if command.command == SystemCommandValue.PAUSE:
-				s.sysctrl_disconnected	= False
-				s.sysctrl_failsafe		= False
 				s.sysctrl_pause			= True
 				logger.info("SysCtrl: Simulation PAUSED")
 			elif command.command == SystemCommandValue.RESUME:
-				s.sysctrl_disconnected	= False
-				s.sysctrl_failsafe		= False
 				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()	# prevent instant failsafe
 				logger.info("SysCtrl: Simulation RESUMED")
 			elif command.command == SystemCommandValue.ENTER_FAILSAFE:
 				s.sysctrl_disconnected	= False
 				s.sysctrl_failsafe		= True
-				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER FAILSAFE")
 			elif command.command == SystemCommandValue.EXIT_FAILSAFE:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= False
-				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT FAILSAFE")
 			elif command.command == SystemCommandValue.ENTER_DISCONNECTED:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= True
-				s.sysctrl_pause			= False
 				logger.info("SysCtrl: ENTER DISCONNECTED")
 			elif command.command == SystemCommandValue.EXIT_DISCONNECTED:
 				s.sysctrl_failsafe		= False
 				s.sysctrl_disconnected	= False
-				s.sysctrl_pause			= False
 				s.last_net_update_time	= time.time()
 				logger.info("SysCtrl: EXIT DISCONNECTED")
 

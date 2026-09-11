@@ -150,8 +150,6 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 		# step 2: optimizing, with max acc from prev step
 
 		for v2 in vehicles:
-			if v1.id == v2.id or v2.state == VehicleState.DISCONNECTED: continue
-
 			new_acc		= commands[v1.id].target_acceleration
 			# use updated acc if possible, for better prediction
 			v2_curr_acc	= commands[v2.id].target_acceleration if commands.get(v2.id) is not None else v2.acceleration
@@ -170,7 +168,7 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 				# it's just estimated as a worst-case scenario, so that it won't influence our decisions.
 				# - also try to stop if v2 has already occupied the conflict point
 				# - to avoid deadlocks, never really stop but just slow down (except for emergencies)
-				if should_yield_to(v1, v2) or v2.state != VehicleState.NORMAL or v2_dist_to_conflict <= ROAD_WIDTH + CAR_LENGTH/2:
+				if should_yield_to(v1, v2) or v2.state != VehicleState.NORMAL or v2_dist_to_conflict <= ROAD_WIDTH - CAR_LENGTH/2:
 
 					v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
 					v1_exit_angle		= roundabout.get_road_angle(v1.exit_road)
@@ -201,7 +199,7 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 						v2_dist_to_conflict <= ROAD_WIDTH - CAR_LENGTH/2 and
 						stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
 					):
-						commands[v1.id].target_acceleration = min(new_acc, -v1.params.max_brake)
+						commands[v1.id].target_acceleration = -v1.params.max_brake
 						break
 
 					if v1.speed <= v1_in_min_speed:
@@ -386,6 +384,17 @@ async def loop_control(client: aiomqtt.Client):
 			await asyncio.sleep(1.0 / UPDATES_P_S_CONTROLLER)
 			continue
 
+		# purge stale vehicles
+		stale_vids = [vid for vid, t in active_vehicles_times.items() if current_t - t > TIMER_NETWORK_TIMEOUT]
+		for vid in stale_vids:
+			logger.debug("Vehicle %s timed out. Purging from active controller memory.", vid)
+			active_vehicles.pop(vid, None)
+			active_vehicles_times.pop(vid, None)
+			active_vehicles_done.pop(vid, None)
+		for i in range(len(precedence_queue)-1, -1, -1):
+			if precedence_queue[i] not in active_vehicles:
+				precedence_queue.remove(precedence_queue[i])
+
 		# clear old vision data
 		while True:
 			if len(vehicles_pos) == 0:
@@ -408,7 +417,7 @@ async def loop_control(client: aiomqtt.Client):
 				v_t	 = active_vehicles_times.get(v.id, current_t)
 				v_compare.append(
 					vehicle.v_navigate(
-						v=v.model_copy(deep=True, update={"acceleration": 0.0}),
+						v=v.model_copy(deep=True, update={"acceleration": 0.0, "exit_road": (v.exit_road + 1) % ROUNDABOUT_N_ROADS}),
 						dt=current_t - v_t
 					)
 				)

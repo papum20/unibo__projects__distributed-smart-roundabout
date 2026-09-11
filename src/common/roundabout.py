@@ -5,6 +5,18 @@ from common.models.models import Position
 
 
 
+def get_next_road(
+	angle	: float,
+	n_roads	: int	= ROUNDABOUT_N_ROADS
+) -> int:
+	"""
+	@param angle: angle in radians (0 is East, pi/2 is North)
+	@return: the index of the next road (0..n_roads-1) in counter-clockwise order
+	"""
+	road_angle = (2 * math.pi / n_roads)
+	return int((angle + road_angle) // road_angle) % n_roads
+
+
 def get_road_angle(
     road_index	: int,
     n_roads		: int	= ROUNDABOUT_N_ROADS,

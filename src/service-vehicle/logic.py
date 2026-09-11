@@ -1,7 +1,7 @@
 import logging
 import random
 
-from common import math_utils, physics, roundabout, vehicle
+from common import math_utils, roundabout, vehicle
 from common.const import (
 	CAR_LENGTH,
 	ROAD_WIDTH,
@@ -89,6 +89,22 @@ def vehicle_navigate_emergency(
 		return Command(target_acceleration=-v1.params.max_brake)
 
 	for v2_pos in v_others:
+
+		if v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2_pos.nav_state == VehicleNavState.APPROACHING:
+
+			next_road			= roundabout.get_next_road(v1.pos_angle)
+			conflict_angle		= roundabout.get_road_angle(next_road)
+			v1_dist_to_conflict	= math_utils.get_dist_on_circle(v1.pos_angle, conflict_angle)
+			v2_dist_to_conflict	= math_utils.get_dist_to_roundabout(v2_pos.pos)
+
+			# try to stop if v2 has already occupied the conflict point, with hard brake
+			stop_dist = v1.get_stop_dist(v1.params.max_brake) + CAR_LENGTH
+			if (
+				v2_dist_to_conflict <= ROAD_WIDTH - CAR_LENGTH/2 and
+				stop_dist <= v1_dist_to_conflict <= stop_dist + max(v1.get_reaction_time_dist(), VEHICLE_SAFETY_MARGIN_M)
+			):
+				return Command(target_acceleration=-v1.params.max_brake)
+		
 		# entrance
 		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
@@ -137,8 +153,12 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 		new_acc = min(new_acc, 0.0)
 
 	for v2_pos in v_others:
+
+		if v1.nav_state == VehicleNavState.IN_ROUNDABOUT and v2_pos.nav_state == VehicleNavState.APPROACHING:
+			pass
+
 		# entrance
-		if v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
+		elif v1.nav_state == VehicleNavState.APPROACHING and v2_pos.nav_state == VehicleNavState.IN_ROUNDABOUT:
 
 			conflict_angle		= roundabout.get_road_angle(v1.entry_road)
 			v2_dist_to_conflict = math_utils.get_dist_on_circle(v2_pos.pos_angle, conflict_angle)
@@ -147,7 +167,7 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 			if v2_pos.speed == 0.0 and CAR_LENGTH <= v2_dist_to_conflict < ROUNDABOUT_PERIMETER / 2:
 				continue
 			
-			v1_dist_to_conflict = math_utils.get_dist(v1.pos, ROUNDABOUT_POS) - ROUNDABOUT_RADIUS
+			v1_dist_to_conflict = math_utils.get_dist_to_roundabout(v1.pos)
 			if v1_dist_to_conflict < ROUNDABOUT_PROXIMITY_DIST + ROAD_WIDTH:
 				
 				# most cautios safety distance
@@ -158,8 +178,9 @@ def evaluate_failsafe(v1: Vehicle, v_others: list[VehiclePosition]) -> Command:
 				#	break
 
 				v2 = vehicle.vehicle_from_pos(v2_pos)
-				# use acc max, to be safe 
-				pred = vehicle.v_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=v2.params.max_accel)
+				# use acc 0, since there will be little delay, without need for network.
+				# not knowing it, both positive and negative would create some problem (depending on who's on front)
+				pred = vehicle.v_entry_conflict(v1, v2, v1_acc=new_acc, v2_acc=0.0)
 				if pred is None:
 					# let pass.
 					# a lower acc wont change this.

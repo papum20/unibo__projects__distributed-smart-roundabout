@@ -180,10 +180,16 @@
 
 						const id1 = collision.v1_id.substring(0, 4);
 						const id2 = collision.v2_id.substring(0, 4);
+						let navStr1 = "APP";
+						if (collision.v1_nav_state === "IN_ROUNDABOUT") navStr1 = "RND";
+						if (collision.v1_nav_state === "EXITING") navStr1 = "EXI";
+						let navStr2 = "APP";
+						if (collision.v2_nav_state === "IN_ROUNDABOUT") navStr2 = "RND";
+						if (collision.v2_nav_state === "EXITING") navStr2 = "EXI";
 
 						return `
 							<div class="hud-line">
-								{${time} ${id1}-${id2}}
+								{${time} ${id1}-${id2} (${navStr1}-${navStr2})}
 							</div>
 						`;
 					}).join("");
@@ -299,12 +305,17 @@
 
 					// randomize label position to reduce overlaps, but don't make flicker
 					// (so deterministic based on vehicle ID)
-					const labelOffsets = [
-						[vLen / 2 + 8, -vWid / 2],
-						[vLen / 2 + 8, vWid / 2 + 14],
-						[-vLen / 2 - labelW - 8, -vWid / 2],
-						[-vLen / 2 - labelW - 8, vWid / 2 + 14],
+					const labelHeights = [
+						-vWid	/ 2 - 28,	// car +2
+						-vWid	/ 2 - 14,	// car +1
+						vWid	/ 2 + 14, 	// car -1
+						vWid	/ 2 + 28, 	// car -2
 					];
+
+					const labelOffsets = labelHeights.flatMap(offsetLabelY => [
+						[vLen / 2 + 8, offsetLabelY],
+						[-vLen / 2 - labelW - 8, offsetLabelY],
+					]);
 					const offsetIndex = vehicleOrder.get(vehicle_id) % labelOffsets.length;
 					const [offsetLabelX, offsetLabelY] = labelOffsets[offsetIndex];
 
