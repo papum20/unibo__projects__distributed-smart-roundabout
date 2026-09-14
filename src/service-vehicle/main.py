@@ -63,7 +63,7 @@ state = RuntimeState()
 
 
 
-async def loop_listen_commands(client, s: RuntimeState = state):
+async def loop_listen(client, s: RuntimeState = state):
 	command_topic			= f"{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_COMMAND_SUFFIX}"
 	positions_topic			= f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_POSITION_SUFFIX}"
 	sysctrl_topic			= f"{config.TOPIC_SYSCTRL_PREFIX}/{config.TOPIC_SYSCTRL_BROADCAST_SUFFIX}"
@@ -208,7 +208,7 @@ async def main(s: RuntimeState = state):
 		await publish_reset(client)
 		# run both concurrently
 		await asyncio.gather(
-			loop_listen_commands(client, s),
+			loop_listen(client, s),
 			loop_publish_vision(client, s),
 			loop_physics(client, s)
 		)
