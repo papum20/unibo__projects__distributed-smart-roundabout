@@ -40,7 +40,7 @@ async def mqtt_listener():
 	async with aiomqtt.Client(hostname=config.HOST_BROKER, port=config.PORT_BROKER) as client:
 		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/{config.TOPIC_VEHICLE_COLLISIONS_SUFFIX}')
 		await client.subscribe(f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_RESET_SUFFIX}")
-		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}')
+		await client.subscribe(f'{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}')
 		await client.subscribe(config.TOPIC_CONTROLLER_STATUS)
 		print("Viewer subscribed to telemetry and controller status...")
 

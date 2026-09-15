@@ -48,7 +48,7 @@ async def loop_listen_positions(client: aiomqtt.Client):
 	"""
 	Listen for cars reporting their positions.
 	"""
-	topic_pattern = f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}"
+	topic_pattern = f"{config.TOPIC_VEHICLE_PREFIX}/+/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}"
 	await client.subscribe(topic_pattern)
 	logger.info("Controller listening for positions.")
 	

@@ -323,11 +323,9 @@ async def loop_listen(client):
 
 			if message.topic.matches(telemetry_topic):
 				vehicle_state = Vehicle(**payload)
-				# can't receive messages from disconnected vehicles (they're only sent for debugging).
-				if vehicle_state.state != VehicleState.DISCONNECTED:
-					active_vehicles[vehicle_state.id]		= vehicle_state
-					active_vehicles_times[vehicle_state.id]	= time.time()
-					active_vehicles_done[vehicle_state.id]	= False
+				active_vehicles[vehicle_state.id]		= vehicle_state
+				active_vehicles_times[vehicle_state.id]	= time.time()
+				active_vehicles_done[vehicle_state.id]	= False
 
 			elif message.topic.matches(vision_topic):
 				for item in payload:

@@ -189,10 +189,14 @@ async def loop_physics(client, s: RuntimeState = state):
 		v_pos = s.vehicle.to_pos()
 
 		# publish even for disconnected, only for debugging and displaying
-		telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}'
+		telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}'
 		await client.publish(telemetry_topic, payload=s.vehicle.model_dump_json())
-		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
-		pos_topic		= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_POSITION_SUFFIX}'
+		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}', s.vehicle.model_dump_json())
+		if s.vehicle.state != VehicleState.DISCONNECTED:
+			telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}'
+			await client.publish(telemetry_topic, payload=s.vehicle.model_dump_json())
+			logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
+		pos_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_POSITION_SUFFIX}'
 		await client.publish(pos_topic, payload=v_pos.model_dump_json())
 		logger.debug("Published to topic %s: %s", pos_topic, v_pos.model_dump_json())
 

@@ -13,4 +13,7 @@ test:
   * show cars throughput w w/o controller coordination (need autonomous cars)
   * total summed time halted
 
+report:
+* what type of broker? queue?...
+
 commit:
