@@ -192,7 +192,7 @@ async def loop_physics(client, s: RuntimeState = state):
 		telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}'
 		await client.publish(telemetry_topic, payload=s.vehicle.model_dump_json())
 		logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_ALL_SUFFIX}', s.vehicle.model_dump_json())
-		if s.vehicle.state != VehicleState.DISCONNECTED:
+		if not s.sysctrl_disconnected:
 			telemetry_topic	= f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}'
 			await client.publish(telemetry_topic, payload=s.vehicle.model_dump_json())
 			logger.debug("Published to topic %s: %s", f'{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_TELEMETRY_SUFFIX}', s.vehicle.model_dump_json())
