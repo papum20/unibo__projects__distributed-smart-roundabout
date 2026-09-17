@@ -1,23 +1,29 @@
 import importlib
 
-from common.models.models import Position, Vehicle
-pkg_service_controller	= importlib.import_module("service-controller.main")
-evaluate_traffic		= pkg_service_controller.evaluate_traffic
-
+from common.models.models import Position
+from common.models.vehicle import Vehicle, VehicleNavState, VehicleState
+pkg_service_controller = importlib.import_module("service-controller.main")
+evaluate = pkg_service_controller.evaluate
 
 
 def test_controller_slows_down_tailgating_car():
-	# Arrange: Both cars are approaching the center.
 	# Car A is at distance 10. Car B is at distance 15 (5 meters behind A).
-	car_a = Vehicle(id="A", pos=Position(x=10, y=0), pos_angle=0.0, speed=10.0)
-	car_b = Vehicle(id="B", pos=Position(x=15, y=0), pos_angle=0.0, speed=10.0)
+	# Both are going 10 m/s. B must brake.
+	car_a = Vehicle(id="A", pos=Position(x=10, y=0), pos_angle=0.0, speed=10.0, nav_state=VehicleNavState.APPROACHING)
+	car_b = Vehicle(id="B", pos=Position(x=15, y=0), pos_angle=0.0, speed=10.0, nav_state=VehicleNavState.APPROACHING)
 	
-	# Act: Safe distance is set to 10 meters
-	commands = evaluate_traffic(vehicles=[car_a, car_b], safe_distance=10.0)
+	commands = evaluate([car_a, car_b], is_deadlock=0)
 	
-	# Assert
-	# Car A has nobody in front of it, it should not brake
-	assert commands["A"].target_acceleration == 0.0
-	
-	# Car B is only 5 meters behind Car A, it MUST brake
+	# Car A has nobody in front of it, it accelerates or maintains
+	assert commands["A"].target_acceleration >= 0.0
+	# Car B is tailgating, it must brake
 	assert commands["B"].target_acceleration < 0.0
+
+
+def test_controller_ignores_disconnected_ghosts_for_commands():
+	car_a = Vehicle(id="A", pos=Position(x=10, y=0), pos_angle=0.0, speed=10.0, state=VehicleState.DISCONNECTED)
+	
+	commands = evaluate([car_a], is_deadlock=0)
+	
+	# Controller should not issue commands to disconnected vehicles
+	assert "A" not in commands

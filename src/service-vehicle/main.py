@@ -71,8 +71,8 @@ async def loop_listen(client, s: RuntimeState = state):
 
 	await client.subscribe(command_topic)
 	await client.subscribe(positions_topic)
-	await client.subscribe(sysctrl_topic)
-	await client.subscribe(sysctrl_broadcast_topic)
+	await client.subscribe(sysctrl_topic, qos=1)
+	await client.subscribe(sysctrl_broadcast_topic, qos=1)
 	
 	async for message in client.messages:
 		payload = json.loads(message.payload)
@@ -136,12 +136,13 @@ async def loop_publish_vision(client, s: RuntimeState = state):
 			if v_pos.timestamp and current_time - v_pos.timestamp < TIMER_NETWORK_TIMEOUT
 		}
 
-		vision_data = [
-			v_pos.model_dump()
-			for v_pos in s.local_vision_vehicles.values()
-		]
-		vision_topic = f"{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_VISION_SUFFIX}"
-		await client.publish(vision_topic, payload=json.dumps(vision_data))
+		if s.vehicle.state != VehicleState.DISCONNECTED:
+			vision_data = [
+				v_pos.model_dump()
+				for v_pos in s.local_vision_vehicles.values()
+			]
+			vision_topic = f"{config.TOPIC_VEHICLE_PREFIX}/{vehicle_id}/{config.TOPIC_VEHICLE_VISION_SUFFIX}"
+			await client.publish(vision_topic, payload=json.dumps(vision_data))
 		
 		await asyncio.sleep(1.0 / UPDATES_P_S_VEHICLE)
 

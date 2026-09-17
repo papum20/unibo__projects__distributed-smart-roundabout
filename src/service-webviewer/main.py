@@ -136,7 +136,7 @@ async def control_sim(cmd: SystemCommand):
 				update={"vehicle_id": vehicle_id, "vehicle_count": None}
 			)
 
-			await client.publish(topic, payload=resolved_cmd.model_dump_json())
+			await client.publish(topic, payload=resolved_cmd.model_dump_json(), qos=1)
 			published_commands.append(resolved_cmd)
 
 	return {"status": "ok", "commands": published_commands}

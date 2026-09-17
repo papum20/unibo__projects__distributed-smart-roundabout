@@ -89,7 +89,7 @@
 			</div>
 
 			<div class="dashboard-column">
-				<h2>Collisions</h2>
+				<h2>Collisions (<span id="collision-count">0</span>)</h2>
 				<hr style="border-color: #444;">
 				<div id="collision-list"></div>
 			</div>
@@ -166,6 +166,8 @@
 
 				document.getElementById("vehicle-count").textContent =
    					`Total spawned: ${totVSpawned} | Active vehicles: ${vehicleIds.length} | Current ghosts: ${Object.keys(ghosts).length}`;
+
+				document.getElementById("collision-count").textContent = collisions.length;
 
 				const collisionHtml = collisions.length === 0
 					? "<div class=\"hud-line\">None</div>"

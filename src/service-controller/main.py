@@ -233,9 +233,16 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 				v1_dist_to_conflict	= math_utils.get_dist_to_roundabout(v1.pos)
 				v2_dist_to_conflict	= math_utils.get_dist_on_circle(v2.pos_angle, conflict_angle)
 
-				# avoid deadlocks if v2 has stopped right before, to yield
-				if v2.speed == 0.0 and v2_curr_acc <= 0 and CAR_LENGTH <= v2_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
+				# avoid deadlocks if v2 has stopped right before, to yield.
+				if not is_deadlock and v2.speed == 0.0 and v2_curr_acc <= 0 and CAR_LENGTH <= v2_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
 					continue
+
+				
+				# try to stop safely and not enter, if roundabout in deadlock.
+				v1_dist_to_entry = math_utils.get_dist_to_roundabout(v1.pos) - ROAD_WIDTH - CAR_LENGTH / 2
+				if is_deadlock and v1_dist_to_entry - v1.get_stop_dist(acc_brake=v1.params.max_brake) - v1.get_reaction_time_dist() > 0: # ROUNDABOUT_PROXIMITY_DIST:
+					commands[v1.id].target_acceleration = v1.params.max_accel
+					break
 
 				# check if v2 has just passed the entrance and is physically blocking the way
 				#v2_dist_from_conflict = math_utils.get_dist_on_circle(conflict_angle, v2.pos_angle)
@@ -251,7 +258,7 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 				v2_dist_to_exit		= math_utils.get_dist_on_circle(v2.pos_angle, v2_exit_angle)
 				
 				# check if v2 exits earlier
-				if v2_dist_to_exit <= v2_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
+				if not is_deadlock and v2_dist_to_exit <= v2_dist_to_conflict <= ROUNDABOUT_PERIMETER / 2:
 					continue
 
 				# even if v2 has to yield, v1 still has to check:
@@ -261,7 +268,6 @@ def evaluate(vehicles: list[Vehicle], is_deadlock: int) -> dict[str, Command]:
 				# coordinate with v2
 
 				# if still far from roundabout, no need to brake
-				v1_dist_to_entry = math_utils.get_dist_to_roundabout(v1.pos) - ROAD_WIDTH - CAR_LENGTH / 2
 				if v1_dist_to_entry - v1.get_stop_dist(acc_brake=v1.get_acc_brake()) - v1.get_reaction_time_dist() > 0: # ROUNDABOUT_PROXIMITY_DIST:
 					# as long as you can start braking later, no need to already do it now
 					continue

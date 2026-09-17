@@ -1,3 +1,4 @@
 aiomqtt==2.5.1
 pydantic==2.13.4
 python-dotenv==1.2.2
+pytest==9.1.1

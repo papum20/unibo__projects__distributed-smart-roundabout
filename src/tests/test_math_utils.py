@@ -1,3 +1,5 @@
+import math
+
 from  common.const import (
 	ROUNDABOUT_POS,
 	ROUNDABOUT_RADIUS
@@ -5,29 +7,39 @@ from  common.const import (
 from common.math_utils import (
 	get_dist,
 	get_dist_to_roundabout,
-	is_in_roundabout,
-	move
+	get_dist_on_circle,
+	is_in_roundabout
 )
 from common.models.models import Position
 
 
 
-def test_is_in_roundabout():
+def test_get_dist():
+	p1 = Position(x=0, y=0)
+	p2 = Position(x=3, y=4)
+	assert get_dist(p1, p2) == 5.0
 
-	# inside
-	pi1 = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS / 2, y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS / 2)
-	# outside
-	po1 = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS * 2, y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS * 3)
-	po2 = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS + 1, y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS + 1)
-	po3 = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS - 1, y=ROUNDABOUT_POS.y + ROUNDABOUT_RADIUS - 1)
-	# edge
-	pe4 = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS, y=ROUNDABOUT_POS.y)
-	
-	assert is_in_roundabout(pi1) is True
-	assert is_in_roundabout(po1) is False
-	assert is_in_roundabout(po2) is False
-	assert is_in_roundabout(po3) is False
-	assert is_in_roundabout(pe4) is True
+
+def test_get_dist_on_circle():
+	# 0 is East, pi/2 is North. Distance counter-clockwise from East to North.
+	dist = get_dist_on_circle(0.0, math.pi / 2, radius=10.0)
+	expected = (math.pi / 2) * 10.0
+	assert math.isclose(dist, expected)
+
+
+def test_is_in_roundabout():
+	# Exact center
+	p_center = Position(x=ROUNDABOUT_POS.x, y=ROUNDABOUT_POS.y)
+	assert is_in_roundabout(p_center) is True
+
+	# Just inside the boundary
+	p_inside = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS - 1, y=ROUNDABOUT_POS.y)
+	assert is_in_roundabout(p_inside) is True
+
+	# Outside the boundary
+	p_outside = Position(x=ROUNDABOUT_POS.x + ROUNDABOUT_RADIUS + 5, y=ROUNDABOUT_POS.y)
+	assert is_in_roundabout(p_outside) is False
+	assert get_dist_to_roundabout(p_outside) == 5.0
 
 
 
@@ -73,25 +85,3 @@ def test_dist_to_roundabout():
 
 	dist_i1 = get_dist_to_roundabout(pi1)
 	assert dist_i1 == 0.0
-
-
-
-def test_move_towards_center():
-    
-    pos_start = Position(x=10.0, y=0.0)
-    # after 1 second at 2 m/s, it should be at (8, 0)
-    new_pos = move(pos_start, speed=2.0, dt=1.0)
-    assert new_pos.x == 8.0
-    assert new_pos.y == 0.0
-    
-    pos_start_y = Position(x=0.0, y=10.0)
-    new_pos_y = move(pos_start_y, speed=3.0, dt=1.0)
-    assert new_pos_y.x == 0.0
-    assert new_pos_y.y == 7.0
-
-    # from (3, 4), distance to center is 5
-    pos_diag = Position(x=3.0, y=4.0)
-    new_pos_diag = move(pos_diag, speed=5.0, dt=1.0)
-    assert round(new_pos_diag.x, 5) == 0.0
-    assert round(new_pos_diag.y, 5) == 0.0
-

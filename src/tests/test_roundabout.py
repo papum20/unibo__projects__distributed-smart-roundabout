@@ -13,12 +13,11 @@ def test_get_road_angle():
 
 
 def test_get_point_on_road():
-	x, y = get_point_on_road(road_index=0, distance_from_boundary=10.0, n_roads=4)
-	assert x == 10.0 + ROUNDABOUT_RADIUS
-	assert y == 0.0
+	pos = get_point_on_road(road_index=0, dist_from_roundabout=10.0, n_roads=4)
+	assert pos.x == 10.0 + ROUNDABOUT_RADIUS
+	assert pos.y == 0.0
 
 	# road 1 (North)
-	x, y = get_point_on_road(road_index=1, distance_from_boundary=10.0, n_roads=4)
-	# use math.isclose because cos(pi/2) is not exactly 0.0
-	assert math.isclose(x, 0.0,							abs_tol=1e-9)
-	assert math.isclose(y, 10.0 + ROUNDABOUT_RADIUS,	abs_tol=1e-9)
+	pos = get_point_on_road(road_index=1, dist_from_roundabout=10.0, n_roads=4)
+	assert math.isclose(pos.x, 0.0,							abs_tol=1e-9)
+	assert math.isclose(pos.y, 10.0 + ROUNDABOUT_RADIUS,	abs_tol=1e-9)

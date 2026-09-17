@@ -1,37 +1,73 @@
 import math
 
 from common.models.models import Position
-from common.physics import update_speed, v_move_towards, move_on_circle
+from common.models.vehicle import Vehicle, VehicleState, VehicleNavState, VehicleParams
+from common.physics import v_update_speed, v_ride_dist, v_ride_t, v_move_towards
 
 
+def create_dummy_vehicle(speed=10.0, acc=0.0):
+	return Vehicle(
+		id="test",
+		pos=Position(x=0, y=0),
+		pos_angle=0.0,
+		speed=speed,
+		acceleration=acc,
+		state=VehicleState.NORMAL,
+		nav_state=VehicleNavState.APPROACHING,
+		# Set a high max speed so tests don't unexpectedly cap the speed
+		params=VehicleParams(max_speed=100.0, max_accel=10.0, max_brake=10.0)
+	)
 
-def test_update_speed():
-    # accelerating
-    assert update_speed(speed=5.0, acc=2.0, dt=1.0, max_speed=10.0) == 7.0
-    # clamping at max speed
-    assert update_speed(speed=9.0, acc=2.0, dt=1.0, max_speed=10.0) == 10.0
-    # braking (no reversing allowed)
-    assert update_speed(speed=1.0, acc=-3.0, dt=1.0, max_speed=10.0) == 0.0
+def test_v_update_speed():
+	v = create_dummy_vehicle(speed=10.0, acc=2.0)
+	new_speed = v_update_speed(v, dt=1.0)
+	assert new_speed == 12.0
+	
+	# Test braking
+	v.acceleration = -5.0
+	assert v_update_speed(v, dt=1.0) == 5.0
+
+	# Test complete stop (no reverse)
+	assert v_update_speed(v, dt=3.0) == 0.0
 
 
-def test_move_towards():
-    pos		= Position(x=0.0, y=0.0)
-    target	= Position(x=10.0, y=0.0)
-    new_pos = v_move_towards(pos, target, speed=2.0, dt=1.0)
-    assert new_pos.x == 2.0
-    assert new_pos.y == 0.0
+def test_v_ride_dist():
+	# Constant speed
+	v = create_dummy_vehicle(speed=10.0, acc=0.0)
+	assert v_ride_dist(v, dt=2.0) == 20.0
+
+	# Accelerating: d = vt + 0.5 * a * t^2 -> 10*2 + 0.5*2*4 = 24
+	v.acceleration = 2.0
+	assert v_ride_dist(v, dt=2.0) == 24.0
+
+	# Braking to a halt: v=10, a=-5. Takes 2s to stop. Distance = 10
+	v.acceleration = -5.0
+	assert v_ride_dist(v, dt=3.0) == 10.0 
 
 
-def test_move_on_circle():
-    new_angle, new_pos = move_on_circle(
-        center			= Position(x=0.0, y=0.0),
-        radius			= 10.0,
-        current_angle	= 0.0, 
-        speed			= 5.0, 
-        dt				= 1.0
-    )
-    # angular velocity = speed / radius = 5 / 10 = 0.5 rad/s
-    assert new_angle == 0.5
-    # x = r * cos(theta), y = r * sin(theta)
-    assert math.isclose(new_pos.x, 10.0 * math.cos(0.5))
-    assert math.isclose(new_pos.y, 10.0 * math.sin(0.5))
+def test_v_ride_t():
+	v = create_dummy_vehicle(speed=10.0, acc=0.0)
+	# At 10m/s, takes 2 seconds to travel 20 meters
+	assert v_ride_t(v, dist=20.0) == 2.0
+
+	# Braking vehicle: v=10, a=-2. TTA for 16 meters.
+	# 16 = 10t - t^2 -> t=2.
+	v.acceleration = -2.0
+	assert math.isclose(v_ride_t(v, dist=16.0), 2.0)
+
+	# Braking vehicle that will never reach the target
+	assert v_ride_t(v, dist=30.0) == math.inf
+
+
+def test_v_move_towards():
+	v		= create_dummy_vehicle(speed=5.0, acc=0.0)
+	v.pos	= Position(x=0, y=0)
+	target	= Position(x=10, y=0)
+	
+	new_pos = v_move_towards(v, target, dt=1.0)
+	assert new_pos.x == 5.0
+	assert new_pos.y == 0.0
+	
+	# Overshoot prevention: moving 15 meters when target is only 10m away
+	new_pos2 = v_move_towards(v, target, dt=3.0) 
+	assert new_pos2.x == 10.0	# snapped to target

@@ -4,9 +4,8 @@ services:
   broker:
     image: eclipse-mosquitto
     container_name: roundabout_mqttbroker
-    ports:
-      - "${PORT_LOCAL_BROKER}:${PORT_BROKER}"                       # Expose port so you can watch traffic from your host machine
-      - "${PORT_LOCAL_BROKER_WEBSOCKET}:${PORT_BROKER_WEBSOCKET}"   # Optional: for WebSockets if you use a web visualizer
+    # expose PORT_BROKER if you need to watch traffic from your host machine
+    # optional PORT_BROKER_WEBSOCKET: for WebSockets if you use a web visualizer
     volumes:
       - ./service-mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
     networks:
@@ -21,8 +20,6 @@ services:
       - broker
     env_file:
       - bash-scripts/clean.env.generated
-    ports:
-      - "${PORT_LOCAL_CONTROLLER}:${PORT_CONTROLLER}"
     networks:
       - broker-network
 
@@ -47,7 +44,7 @@ services:
     env_file:
       - bash-scripts/clean.env.generated
     deploy:
-      replicas: 40 #10
+      replicas: ${VEHICLE_REPLICA_N}
     networks:
       - broker-network
 

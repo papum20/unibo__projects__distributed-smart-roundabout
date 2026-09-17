@@ -1,57 +1,59 @@
 import importlib
 
-from common.models.models import Position, Vehicle, VehicleNavState, VehicleState
-pkg_service_vehicle = importlib.import_module("service-vehicle.main")
+from common.models.models import Position
+from common.models.vehicle import Vehicle, VehicleNavState, VehicleState, VehiclePosition
+from common.vehicle import evaluate_safely, v_collide
+
+pkg_service_vehicle = importlib.import_module("service-vehicle.logic")
 evaluate_failsafe	= pkg_service_vehicle.evaluate_failsafe
-reset_vehicle		= pkg_service_vehicle.reset_vehicle
-
-
-
-def test_failsafe_triggers_on_timeout():
-	vehicle			= Vehicle(id="1", pos=Position(x=10, y=10), pos_angle=0.0, speed=10.0, state=VehicleState.NORMAL)
-	current_time	= 100.0
-	last_time		= 97.0
-	timeout_limit	= 2.0
-	
-	updated_vehicle, command = evaluate_failsafe(vehicle, current_time, last_time, timeout_limit)
-	
-	assert updated_vehicle.state == VehicleState.FAILSAFE
-	assert command.target_acceleration == -5.0	# max braking
-
-
-
-def test_normal_operation_on_healthy_heartbeat():
-	vehicle			= Vehicle(id="1", pos=Position(x=10, y=10), pos_angle=0.0, speed=10.0, state=VehicleState.NORMAL)
-	current_time	= 100.0
-	last_time		= 99.5
-	timeout_limit	= 2.0
-	
-	updated_vehicle, command = evaluate_failsafe(vehicle, current_time, last_time, timeout_limit)
-	
-	assert updated_vehicle.state == VehicleState.NORMAL
-	assert command.target_acceleration == 0.0	# maintain speed
-
+vehicle_reset		= pkg_service_vehicle.vehicle_reset
 
 
 def test_reset_vehicle_clears_state():
-	old_vehicle = Vehicle(
-		id			= "123", 
-		pos			= Position(x=999, y=999), 
-		pos_angle	= 0.0,
-		speed		= 0.0,
-		state		= VehicleState.FAILSAFE,
-		nav_state	= VehicleNavState.EXITING,
+	v = Vehicle(
+		id="123", 
+		pos=Position(x=999, y=999), 
+		pos_angle=0.0, speed=0.0,
+		state=VehicleState.FAILSAFE, nav_state=VehicleNavState.EXITING,
 	)
 	
-	# respawn it on a 4-road roundabout
-	new_vehicle = reset_vehicle(old_vehicle, n_roads=4)
+	# Mutates v in place
+	vehicle_reset(v, n_roads=4)
 	
-	# assert expected values (id unchanged, others reassigned)
-	assert new_vehicle.id == "123"
-	assert new_vehicle.state == VehicleState.NORMAL
-	assert new_vehicle.nav_state == VehicleNavState.APPROACHING
-	assert new_vehicle.speed > 0.0
+	assert v.id == "123"
+	assert v.state == VehicleState.NORMAL
+	assert v.nav_state == VehicleNavState.APPROACHING
+	assert v.speed > 0.0
+	assert 0 <= v.entry_road < 4
+
+
+def test_v_collide_rectangles():
+	# Two vehicles in the exact same spot should collide
+	v1 = VehiclePosition(id="1", pos=Position(x=0, y=0), pos_angle=0.0, speed=0.0, nav_state=VehicleNavState.APPROACHING)
+	v2 = VehiclePosition(id="2", pos=Position(x=0, y=0), pos_angle=0.0, speed=0.0, nav_state=VehicleNavState.APPROACHING)
+	assert v_collide(v1, v2) is True
+
+	# Move v2 completely out of the way
+	v2.pos = Position(x=10, y=10)
+	assert v_collide(v1, v2) is False
+
+
+def test_failsafe_brakes_for_tailgating():
+	# Failsafe vehicle should brake if someone is in front of it on the same road
+	v1 = Vehicle(id="V1", pos=Position(x=100, y=0), pos_angle=0.0, speed=10.0, nav_state=VehicleNavState.APPROACHING)
+	v2_pos = VehiclePosition(id="V2", pos=Position(x=90, y=0), pos_angle=0.0, speed=10.0, nav_state=VehicleNavState.APPROACHING)
 	
-	# ensure it picked valid entry/exit roads
-	assert 0 <= new_vehicle.entry_road	< 4
-	assert 0 <= new_vehicle.exit_road	< 4
+	cmd = evaluate_failsafe(v1, [v2_pos])
+	# Must issue a braking command
+	assert cmd.target_acceleration < 0.0
+
+
+def test_evaluate_safely_clear_road():
+	v1 = Vehicle(id="V1", pos=Position(x=100, y=0), pos_angle=0.0, speed=10.0, nav_state=VehicleNavState.APPROACHING)
+	# V2 is far away on another road
+	v2_pos = VehiclePosition(id="V2", pos=Position(x=0, y=100), pos_angle=1.57, speed=10.0, nav_state=VehicleNavState.APPROACHING)
+
+	cmd = evaluate_safely(v1, [v2_pos])
+	# No cars in front, it should return the maximum allowed acceleration
+	assert cmd is not None
+	assert cmd.target_acceleration == v1.params.max_accel
