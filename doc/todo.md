@@ -1,5 +1,3 @@
 
 
-imgs, report, readme
-
 commit:

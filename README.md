@@ -1,6 +1,8 @@
 # Microservices-ACMEMobility
 Project for the Distributed Systems course at University of Bologna 2025/2026. A simulation of a **Distributed Cyber-Physical System (CPS)** managing a "Smart Roundabout".  
 
+![web app screenshot](doc/roundabout-app-screenshot.png)
+
 ## Requirements
 
 - docker engine
@@ -67,3 +69,7 @@ From the root directory, run all the tests with:
 ```bash
 pytest
 ```
+
+## Project report
+
+https://github.com/papum20/unibo__projects__distributed-report  
