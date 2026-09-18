@@ -1,4 +1,4 @@
-# Microservices-ACMEMobility
+# Smart Roundabout Controller
 Project for the Distributed Systems course at University of Bologna 2025/2026. A simulation of a **Distributed Cyber-Physical System (CPS)** managing a "Smart Roundabout".  
 
 ![web app screenshot](doc/roundabout-app-screenshot.png)
